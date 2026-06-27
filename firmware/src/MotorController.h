@@ -3,9 +3,6 @@
 
 #include "Config.h"
 
-// Registro global de salida del expansor I2C MCP23017 para ruteo rápido
-extern uint8_t mcp_direction_register;
-
 class MotorController {
 public:
     MotorController();

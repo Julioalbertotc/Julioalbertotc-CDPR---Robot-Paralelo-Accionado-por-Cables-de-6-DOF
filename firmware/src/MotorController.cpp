@@ -4,8 +4,7 @@
 #include "driver/pcnt.h"
 #endif
 
-// Definición de variable global del registro de dirección
-uint8_t mcp_direction_register = 0;
+#include "Globals.h"
 
 MotorController::MotorController() 
     : id(-1), current_ticks(0), target_ticks(0), last_ticks(0),
@@ -19,8 +18,7 @@ void MotorController::begin(int motor_id) {
     
 #if !SIMULATION_MODE
     // Configurar PWM por hardware usando el periférico LEDC de ESP32
-    ledcSetup(id, 20000, 8); // Canal, Frecuencia 20 kHz, Resolución 8 bits
-    ledcAttachPin(pins.pwm, id);
+    ledcAttach(pins.pwm, 20000, 8); // Pin, Frecuencia 20 kHz, Resolución 8 bits
     
     // Configurar e inicializar hardware del contador de pulsos (PCNT)
     // El ESP32 tiene 8 unidades PCNT independientes (0 a 7), perfecto para 8 encoders.
@@ -119,7 +117,7 @@ void MotorController::update(float dt) {
 
 #if !SIMULATION_MODE
     int pwm_val = (int)abs(pwm_output);
-    ledcWrite(id, pwm_val);
+    ledcWrite(pins.pwm, pwm_val);
     
     // Actualizar registro de dirección en expansor I2C
     if (pwm_output >= 0.0f) {

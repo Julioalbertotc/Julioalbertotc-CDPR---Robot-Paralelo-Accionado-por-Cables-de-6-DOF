@@ -14,12 +14,13 @@
 #define CONTROL_LOOP_HZ 1000 // 1 kHz
 
 // =============================================================================
-// RED WI-FI (CONEXIÓN AL MÓDEM DE TU CASA)
+// RED WI-FI (MODO PUNTO DE ACCESO - AP)
 // =============================================================================
-//#define WIFI_SSID "IZZI-5992"
-//#define WIFI_PASSWORD "3C04611A5992"
-#define WIFI_SSID "ARRIS-1111"
-#define WIFI_PASSWORD "1234567890"
+#define AP_SSID "CDPR_Cable_Robot"
+#define AP_PASSWORD "12345678"
+#define AP_CHANNEL 1
+#define AP_MAX_CONN 4
+
 // =============================================================================
 // DIRECCIÓN I2C Y PINES DE EXPANSOR / SEGURIDAD
 // =============================================================================

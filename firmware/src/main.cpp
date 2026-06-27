@@ -6,36 +6,8 @@
 #include "SystemState.h"
 #include "Kinematics.h"
 #include "MotorController.h"
+#include "Globals.h"
 #include "WebInterface.h"
-
-// =============================================================================
-// VARIABLES GLOBALES Y CONTROL DE ESTADO
-// =============================================================================
-SystemState current_state = STATE_UNHOMED;
-
-// Poses objetivo (consignas)
-float target_x = DEFAULT_START_POSE_POS.x;
-float target_y = DEFAULT_START_POSE_POS.y;
-float target_z = DEFAULT_START_POSE_POS.z;
-float target_roll = DEFAULT_START_POSE_ROT.x;
-float target_pitch = DEFAULT_START_POSE_ROT.y;
-float target_yaw = DEFAULT_START_POSE_ROT.z;
-
-// Poses estimadas actuales (basadas en encoders)
-float current_x = DEFAULT_START_POSE_POS.x;
-float current_y = DEFAULT_START_POSE_POS.y;
-float current_z = DEFAULT_START_POSE_POS.z;
-float current_roll = DEFAULT_START_POSE_ROT.x;
-float current_pitch = DEFAULT_START_POSE_ROT.y;
-float current_yaw = DEFAULT_START_POSE_ROT.z;
-
-// Flags de solicitudes de comandos (WebSockets/Serial)
-bool request_homing = false;
-bool request_center = false;
-bool request_estop = false;
-
-// Instancia de los 8 controladores de motor
-MotorController motors[8];
 
 // =============================================================================
 // NÚCLEO 2: TAREA DE CONTROL DE LAZO CERRADO (1 kHz)
@@ -195,27 +167,17 @@ void setup() {
 #endif
 
     // =============================================================================
-    // INICIALIZACIÓN DE WI-FI (MODO ESTACIÓN - CONEXIÓN A IZZI)
+    // INICIALIZACIÓN DE WI-FI (MODO PUNTO DE ACCESO - AP)
     // =============================================================================
-    Serial.println("\nIniciando conexión Wi-Fi a tu módem Izzi...");
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD); // Usa las variables de tu Config.h
-
-    int intentos = 0;
-    while (WiFi.status() != WL_CONNECTED && intentos < 20) {
-        delay(500);
-        Serial.print(".");
-        intentos++;
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\n¡Conectado con éxito a la red de tu casa!");
-        Serial.print(">>> INGRESA ESTA IP EN TU NAVEGADOR: ");
-        Serial.println(WiFi.localIP());
-        Serial.println("=================================================");
-    } else {
-        Serial.println("\n[ERROR] No se pudo conectar al Wi-Fi. Revisa que tu módem use 2.4GHz.");
-    }
+    Serial.println("\nIniciando Punto de Acceso WiFi...");
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, 0, AP_MAX_CONN);
+    IPAddress IP = WiFi.softAPIP();
+    Serial.print("Punto de Acceso WiFi creado. SSID: ");
+    Serial.println(AP_SSID);
+    Serial.print(">>> INGRESA ESTA IP EN TU NAVEGADOR: ");
+    Serial.println(IP);
+    Serial.println("=================================================");
 
     // Inicializar Servidor Web y WebSockets
     // IMPORTANTE: Asegúrate de borrar WiFi.softAP() dentro de esta función
@@ -296,7 +258,7 @@ void loop() {
         // Envío de reporte JSON simplificado por Serial
         JsonDocument serialDoc;
         serialDoc["state"] = (int)current_state;
-        JsonObject pos = serialDoc.createNestedObject("pose");
+        JsonObject pos = serialDoc["pose"].to<JsonObject>();
         pos["x"] = current_x;
         pos["y"] = current_y;
         pos["z"] = current_z;
@@ -304,8 +266,8 @@ void loop() {
         pos["p"] = current_pitch;
         pos["yaw"] = current_yaw;
 
-        JsonArray lengths = serialDoc.createNestedArray("lengths");
-        JsonArray pwms = serialDoc.createNestedArray("pwms");
+        JsonArray lengths = serialDoc["lengths"].to<JsonArray>();
+        JsonArray pwms = serialDoc["pwms"].to<JsonArray>();
         for (int i = 0; i < 8; i++) {
             lengths.add(cur_lengths[i]);
             pwms.add(motor_pwms[i]);

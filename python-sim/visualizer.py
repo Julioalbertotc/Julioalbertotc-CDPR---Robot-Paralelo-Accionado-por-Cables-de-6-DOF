@@ -70,7 +70,7 @@ def animate_cdpr():
     ax.set_xlabel('X (cm)')
     ax.set_ylabel('Y (cm)')
     ax.set_zlabel('Z (cm)')
-    ax.set_title('Simulador 3D CDPR - Trayectoria Helicoidal de Prueba')
+    ax.set_title('Simulaador 3D CDPR - Trayectoria Helicoidal de Prueba')
     
     # Dibujar las poleas fijas como esferas amarillas
     pole_x = [p[0] for p in POLE_POSITIONS]

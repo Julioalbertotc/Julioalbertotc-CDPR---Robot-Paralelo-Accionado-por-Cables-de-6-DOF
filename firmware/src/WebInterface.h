@@ -8,17 +8,7 @@
 #include "Config.h"
 #include "SystemState.h"
 
-// Variables compartidas con main.cpp
-extern SystemState current_state;
-extern float target_x, target_y, target_z;
-extern float target_roll, target_pitch, target_yaw;
-extern bool request_homing;
-extern bool request_center;
-extern bool request_estop;
-
-// Objetos del servidor web
-static AsyncWebServer server(80);
-static AsyncWebSocket ws("/ws");
+#include "Globals.h"
 
 // Función de procesamiento de comandos recibidos por WebSocket
 inline void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
@@ -85,13 +75,8 @@ inline void initWebInterface() {
         Serial.println("LittleFS inicializado correctamente.");
     }
 
-    // 2. Configurar modo Access Point (AP)
-    //WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, 0, AP_MAX_CONN);
-    //IPAddress IP = WiFi.softAPIP();
-    //Serial.print("Punto de Acceso WiFi creado. SSID: ");
-    //Serial.println(AP_SSID);
-    //Serial.print("Dirección IP del ESP32: ");
-    //Serial.println(IP);
+    // 2. Configurar modo Access Point (AP) - Inicializado en main.cpp
+    Serial.println("Servidor Web utilizando AP configurado en main.cpp.");
 
     // 3. Configurar rutas estáticas
     // Servir index.html por defecto
@@ -129,7 +114,7 @@ inline void broadcastTelemetry(float cur_x, float cur_y, float cur_z,
     JsonDocument doc;
     doc["state"] = (int)current_state;
     
-    JsonObject pos = doc.createNestedObject("pose");
+    JsonObject pos = doc["pose"].to<JsonObject>();
     pos["x"] = cur_x;
     pos["y"] = cur_y;
     pos["z"] = cur_z;
@@ -137,7 +122,7 @@ inline void broadcastTelemetry(float cur_x, float cur_y, float cur_z,
     pos["p"] = cur_pitch;
     pos["yaw"] = cur_yaw;
     
-    JsonObject t_pos = doc.createNestedObject("target_pose");
+    JsonObject t_pos = doc["target_pose"].to<JsonObject>();
     t_pos["x"] = target_x;
     t_pos["y"] = target_y;
     t_pos["z"] = target_z;
@@ -145,11 +130,11 @@ inline void broadcastTelemetry(float cur_x, float cur_y, float cur_z,
     t_pos["p"] = target_pitch;
     t_pos["yaw"] = target_yaw;
 
-    JsonArray lenArr = doc.createNestedArray("lengths");
-    JsonArray tLenArr = doc.createNestedArray("target_lengths");
-    JsonArray tickArr = doc.createNestedArray("ticks");
-    JsonArray tTickArr = doc.createNestedArray("target_ticks");
-    JsonArray pwmArr = doc.createNestedArray("pwms");
+    JsonArray lenArr = doc["lengths"].to<JsonArray>();
+    JsonArray tLenArr = doc["target_lengths"].to<JsonArray>();
+    JsonArray tickArr = doc["ticks"].to<JsonArray>();
+    JsonArray tTickArr = doc["target_ticks"].to<JsonArray>();
+    JsonArray pwmArr = doc["pwms"].to<JsonArray>();
 
     for (int i = 0; i < 8; i++) {
         lenArr.add(lengths[i]);
