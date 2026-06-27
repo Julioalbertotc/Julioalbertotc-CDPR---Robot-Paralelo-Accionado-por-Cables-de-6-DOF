@@ -149,8 +149,7 @@ pip install pyserial matplotlib
 
 ## 7. Licencia
 
-Este proyecto se distribuye bajo licencia **MIT** (ver archivo [`LICENSE`](./LICENSE)). Es un placeholder razonable para un proyecto académico/portafolio — cámbiala si prefieres otra licencia antes de hacer público el repositorio.
-
+Este proyecto se distribuye bajo licencia **MIT** (ver archivo [`LICENSE`](./LICENSE))
 ---
 
 ## 8. Autor
