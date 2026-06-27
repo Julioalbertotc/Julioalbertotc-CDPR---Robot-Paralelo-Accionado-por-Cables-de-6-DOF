@@ -86,12 +86,12 @@ inline void initWebInterface() {
     }
 
     // 2. Configurar modo Access Point (AP)
-    WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, 0, AP_MAX_CONN);
-    IPAddress IP = WiFi.softAPIP();
-    Serial.print("Punto de Acceso WiFi creado. SSID: ");
-    Serial.println(AP_SSID);
-    Serial.print("Dirección IP del ESP32: ");
-    Serial.println(IP);
+    //WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, 0, AP_MAX_CONN);
+    //IPAddress IP = WiFi.softAPIP();
+    //Serial.print("Punto de Acceso WiFi creado. SSID: ");
+    //Serial.println(AP_SSID);
+    //Serial.print("Dirección IP del ESP32: ");
+    //Serial.println(IP);
 
     // 3. Configurar rutas estáticas
     // Servir index.html por defecto
@@ -135,7 +135,7 @@ inline void broadcastTelemetry(float cur_x, float cur_y, float cur_z,
     pos["z"] = cur_z;
     pos["r"] = cur_roll;
     pos["p"] = cur_pitch;
-    pos["y"] = cur_yaw;
+    pos["yaw"] = cur_yaw;
     
     JsonObject t_pos = doc.createNestedObject("target_pose");
     t_pos["x"] = target_x;
@@ -143,7 +143,7 @@ inline void broadcastTelemetry(float cur_x, float cur_y, float cur_z,
     t_pos["z"] = target_z;
     t_pos["r"] = target_roll;
     t_pos["p"] = target_pitch;
-    t_pos["y"] = target_yaw;
+    t_pos["yaw"] = target_yaw;
 
     JsonArray lenArr = doc.createNestedArray("lengths");
     JsonArray tLenArr = doc.createNestedArray("target_lengths");

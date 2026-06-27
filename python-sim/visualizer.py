@@ -46,9 +46,9 @@ def get_anchor_world_positions(x, y, z, roll, pitch, yaw):
 
     world_anchors = []
     for i in range(8):
-        ax = ANCHOR_POSITIONS[i]["x"]
-        ay = ANCHOR_POSITIONS[i]["y"]
-        az = ANCHOR_POSITIONS[i]["z"]
+        ax = ANCHOR_POSITIONS[i][0]
+        ay = ANCHOR_POSITIONS[i][1]
+        az = ANCHOR_POSITIONS[i][2]
 
         qx = x + (r11 * ax + r12 * ay + r13 * az)
         qy = y + (r21 * ax + r22 * ay + r23 * az)
@@ -73,22 +73,22 @@ def animate_cdpr():
     ax.set_title('Simulador 3D CDPR - Trayectoria Helicoidal de Prueba')
     
     # Dibujar las poleas fijas como esferas amarillas
-    pole_x = [p["x"] for p in POLE_POSITIONS]
-    pole_y = [p["y"] for p in POLE_POSITIONS]
-    pole_z = [p["z"] for p in POLE_POSITIONS]
-    ax.scatter(pole_x, pole_y, pole_z, color='gold', s=100, label='Poleas fijas (Cubo)')
+    pole_x = [p[0] for p in POLE_POSITIONS]
+    pole_y = [p[1] for p in POLE_POSITIONS]
+    pole_z = [p[2] for p in POLE_POSITIONS]
+    ax.scatter(pole_x, pole_y, pole_z, color='gold', s= 100, label='Poleas fijas (Cubo)')
     
     # Inicializar elementos a animar
     platform_plot, = ax.plot([], [], [], 'b-', linewidth=2, label='Plataforma Móvil')
     cable_lines = [ax.plot([], [], [], 'g-', alpha=0.6)[0] for _ in range(8)]
     
     # Dibujar líneas del armazón de forma dinámica a partir de POLE_POSITIONS
-    min_x = min(p["x"] for p in POLE_POSITIONS)
-    max_x = max(p["x"] for p in POLE_POSITIONS)
-    min_y = min(p["y"] for p in POLE_POSITIONS)
-    max_y = max(p["y"] for p in POLE_POSITIONS)
+    min_x = min(p[0] for p in POLE_POSITIONS)
+    max_x = max(p[0] for p in POLE_POSITIONS)
+    min_y = min(p[1] for p in POLE_POSITIONS)
+    max_y = max(p[1] for p in POLE_POSITIONS)
     min_z = 0.0
-    max_z = max(p["z"] for p in POLE_POSITIONS)
+    max_z = max(p[2] for p in POLE_POSITIONS)
 
     # Base
     ax.plot([min_x, max_x, max_x, min_x, min_x], [min_y, min_y, max_y, max_y, min_y], [min_z, min_z, min_z, min_z, min_z], 'k--', alpha=0.3)
@@ -112,7 +112,7 @@ def animate_cdpr():
         
         # 1. Graficar cables
         for i in range(8):
-            px, py, pz = POLE_POSITIONS[i]["x"], POLE_POSITIONS[i]["y"], POLE_POSITIONS[i]["z"]
+            px, py, pz = POLE_POSITIONS[i][0], POLE_POSITIONS[i][1], POLE_POSITIONS[i][2]
             ax_x, ax_y, ax_z = anchors[i]
             cable_lines[i].set_data([px, ax_x], [py, ax_y])
             cable_lines[i].set_3d_properties([pz, ax_z])

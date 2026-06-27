@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
+#include <WiFi.h> // <-- LIBRERÍA DE WIFI AÑADIDA
 #include "Config.h"
 #include "SystemState.h"
 #include "Kinematics.h"
@@ -193,7 +194,31 @@ void setup() {
     Serial.println("MODO SIMULACIÓN ACTIVO: Los encoders y motores se simulan en software.");
 #endif
 
-    // Inicializar AP, Servidor Web y WebSockets
+    // =============================================================================
+    // INICIALIZACIÓN DE WI-FI (MODO ESTACIÓN - CONEXIÓN A IZZI)
+    // =============================================================================
+    Serial.println("\nIniciando conexión Wi-Fi a tu módem Izzi...");
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD); // Usa las variables de tu Config.h
+
+    int intentos = 0;
+    while (WiFi.status() != WL_CONNECTED && intentos < 20) {
+        delay(500);
+        Serial.print(".");
+        intentos++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\n¡Conectado con éxito a la red de tu casa!");
+        Serial.print(">>> INGRESA ESTA IP EN TU NAVEGADOR: ");
+        Serial.println(WiFi.localIP());
+        Serial.println("=================================================");
+    } else {
+        Serial.println("\n[ERROR] No se pudo conectar al Wi-Fi. Revisa que tu módem use 2.4GHz.");
+    }
+
+    // Inicializar Servidor Web y WebSockets
+    // IMPORTANTE: Asegúrate de borrar WiFi.softAP() dentro de esta función
     initWebInterface();
 
     // Crear tarea en Core 0
@@ -277,7 +302,7 @@ void loop() {
         pos["z"] = current_z;
         pos["r"] = current_roll;
         pos["p"] = current_pitch;
-        pos["y"] = current_yaw;
+        pos["yaw"] = current_yaw;
 
         JsonArray lengths = serialDoc.createNestedArray("lengths");
         JsonArray pwms = serialDoc.createNestedArray("pwms");

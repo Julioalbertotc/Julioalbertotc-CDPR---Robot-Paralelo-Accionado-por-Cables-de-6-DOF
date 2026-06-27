@@ -5,7 +5,7 @@ import serial
 from kinematics import calculate_inverse_kinematics
 
 # Configuración del puerto serie (ajustar según corresponda en la PC)
-PORT = 'COM3'  # Windows, e.g., 'COM3'. En Linux/Mac, '/dev/ttyUSB0'
+PORT = 'COM5'  # Windows, e.g., 'COM3'. En Linux/Mac, '/dev/ttyUSB0'
 BAUD = 115200
 TIMEOUT = 1.0  # segundos
 
@@ -122,3 +122,5 @@ def run_offline_validation():
 
 if __name__ == "__main__":
     run_validation_test()
+    
+    input ("presiona enter para salir")
