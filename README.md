@@ -1,145 +1,127 @@
-# CDPR — Robot Paralelo Accionado por Cables (6-DOF, 8 cables)
+# CDPR - Robot Paralelo Accionado por Cables de 6-DOF (Arquitectura Dual ESP32)
 
-![Platform](https://img.shields.io/badge/platform-ESP32-blue)
-![Estado](https://img.shields.io/badge/estado-en%20desarrollo-yellow)
-![Licencia](https://img.shields.io/badge/licencia-MIT-green)
+Este repositorio contiene la arquitectura de software completa para un Robot Paralelo Accionado por Cables (CDPR) de 6 grados de libertad (X, Y, Z, Roll, Pitch, Yaw) controlado por una arquitectura de **dos placas ESP32** interconectadas por un bus UART binario de alta velocidad (921600 bps).
 
-Un **Robot Paralelo Accionado por Cables (CDPR)** de escala de prototipo con **6 grados de libertad** (X, Y, Z, Roll, Pitch, Yaw), controlado mediante 8 cables independientes. Un ESP32 calcula la cinemática inversa y controla 8 motores DC en lazo cerrado PID, todo gestionado desde una interfaz web propia con visualización 3D en vivo.
+La división del control optimiza la disponibilidad de pines y recursos de hardware dedicando un microcontrolador exclusivamente a la lectura de encoders (esclavo) y otro a la cinemática inversa, control PID, WiFi y servidor web (maestro).
 
 ---
 
-## ¿Qué es esto?
+## Arquitectura de Hardware y Pines
 
-En lugar de brazos rígidos, este robot mueve una plataforma móvil suspendida dentro de un cubo de acero usando 8 cables de acero inoxidable de 0.3 mm de diámetro. Cambiando la longitud de cada cable de forma coordinada, la plataforma puede trasladarse y rotar libremente en los 6 grados de libertad dentro del volumen del cubo.
+El sistema físico se compone de:
+1. **ESP32 MAIN/MOTOR (Maestro)**: Se encarga de la cinemática inversa, del lazo PID de posición a 1 kHz, de la máquina de estados, del servidor web/WebSocket y de la conexión serial JSON para validación con PC.
+2. **ESP32 ENCODER (Esclavo)**: Lee las 8 unidades de contadores hardware PCNT para los encoders y las envía vía UART al maestro a 1 kHz.
 
-El proyecto incluye todo lo necesario para probarlo de principio a fin:
-- Firmware embebido para el ESP32 (cinemática + control PID).
-- Una página web de control con visualización 3D, servida directamente desde el propio robot.
-- Un modelo de simulación en Python para validar la lógica antes de mover motores reales.
+### Diagrama de Conexiones UART
 
----
+> [!IMPORTANT]
+> El cable de interconexión UART entre ambos ESP32 debe tener las líneas TX/RX cruzadas y es **estrictamente obligatorio compartir la línea GND (Tierra común)** para que el flujo de datos no se corrompa debido a diferencias de potencial.
 
-## Características
-
-- **Cinemática inversa en tiempo real** calculada a bordo del ESP32 (sin depender de una PC).
-- **Control PID independiente** para cada uno de los 8 motores, con torque de retención activo para mantener los cables siempre tensos.
-- **Interfaz web de control** con sliders de pose (X, Y, Z, Roll, Pitch, Yaw), telemetría en vivo y visualización 3D del robot moviéndose en tiempo real (Three.js).
-- **Modo de simulación integrado** en el propio firmware: puedes probar todo el sistema (cinemática, control, web) sin tener los motores conectados.
-- **Modelo de simulación en Python** para pre-sintonizar el PID y validar la cinemática antes de tocar hardware.
-- **Punto de acceso WiFi propio**: el robot crea su propia red, no necesita router ni conexión a internet.
-
----
-
-## Hardware utilizado
-
-| Componente | Especificación | Cantidad |
-|---|---|---|
-| Controlador | ESP32 (dual-core, 240 MHz) | 1 |
-| Motores | DC JGA25-370, 12V, 150 RPM | 8 |
-| Encoders | Hall, cuadratura, integrados en el eje del motor | 8 |
-| Drivers | Puente H TB6612FNG (doble canal, 1.2A/canal) | 4 |
-| Cable de izaje | Acero inoxidable, 0.3 mm de diámetro | 8 hilos |
-| Estructura | Cubo de acero, 45 x 45 cm | 1 |
-
-Cada motor usa 1 pin de PWM y 1 pin de dirección (gracias a un inversor de hardware entre `IN1`/`IN2` del driver), para reducir el uso de pines del ESP32. El pinout exacto está definido en `firmware/src/Config.h`.
-
----
-
-## Arquitectura del proyecto
-
-```
-/firmware
-  /src             → Cinemática, control PID, WiFi, servidor web
-  /data            → Página web de control (servida vía LittleFS)
-  platformio.ini
-/python-sim        → Simulación, sintonización de PID, validación
-README.md
-LICENSE
+```text
+[ ESP32 MAIN ]                                  [ ESP32 ENCODER ]
+  GND -------------------------------------------- GND (Común Obligatorio)
+  RX2 (GPIO 16) <--------------------------------- TX2 (GPIO 17) [Telemetría Encoders]
+  TX2 (GPIO 17) ---------------------------------> RX2 (GPIO 16) [Consignas PWM en Simulación]
 ```
 
-El ESP32 opera de forma **autónoma**: la cinemática y el control PID corren completamente a bordo. El enlace serial con la PC es opcional, y se usa solo para validación cruzada y pruebas (no es necesario para que el robot funcione).
+### Tabla de Asignación de Pines - ESP32 MAIN/MOTOR
+
+| Motor | PWM Pin (Salida) | Bit de Expansor MCP23017 | GPIO Dirección (Si `USE_MCP23017=0`) |
+| :--- | :--- | :--- | :--- |
+| **Motor 0** | GPIO 2 | Bit 0 | GPIO 4 |
+| **Motor 1** | GPIO 12 | Bit 1 | GPIO 13 |
+| **Motor 2** | GPIO 14 | Bit 2 | GPIO 15 |
+| **Motor 3** | GPIO 23 | Bit 3 | GPIO 26 |
+| **Motor 4** | GPIO 27 | Bit 4 | GPIO 32 |
+| **Motor 5** | GPIO 18 | Bit 5 | GPIO 33 |
+| **Motor 6** | GPIO 19 | Bit 6 | GPIO 21 |
+| **Motor 7** | GPIO 25 | Bit 7 | GPIO 22 |
+| **STBY** | GPIO 5 (Desactivación de H-bridge en hardware) | - | - |
+
+- **I2C**: SDA = GPIO 21, SCL = GPIO 22 (Sólo si `USE_MCP23017 = 1` en `Config.h`).
+- **UART2**: RX2 = GPIO 16, TX2 = GPIO 17.
 
 ---
 
-## Cómo empezar
+### Tabla de Asignación de Pines - ESP32 ENCODER
 
-### Requisitos
-- [PlatformIO](https://platformio.org/) (extensión de VS Code o CLI)
-- Python 3 con `pyserial` y `matplotlib` (solo si vas a usar los scripts de `/python-sim`)
+| Motor | Canal Encoder A (PCNT Input) | Canal Encoder B (PCNT Input) | Unidad PCNT |
+| :--- | :--- | :--- | :--- |
+| **Motor 0** | GPIO 34 | GPIO 35 | PCNT 0 |
+| **Motor 1** | GPIO 36 | GPIO 39 | PCNT 1 |
+| **Motor 2** | GPIO 32 | GPIO 33 | PCNT 2 |
+| **Motor 3** | GPIO 25 | GPIO 26 | PCNT 3 |
+| **Motor 4** | GPIO 27 | GPIO 13 | PCNT 4 |
+| **Motor 5** | GPIO 23 | GPIO 19 | PCNT 5 |
+| **Motor 6** | GPIO 4 | GPIO 15 | PCNT 6 |
+| **Motor 7** | GPIO 18 | GPIO 14 | PCNT 7 |
 
-### 1. Clonar el repositorio
-```bash
-git clone https://github.com/tu-usuario/tu-repositorio.git
-cd tu-repositorio
-```
-
-### 2. Configurar tus credenciales WiFi
-Copia el archivo de ejemplo y pon tu propio SSID/contraseña para el punto de acceso del robot:
-```bash
-cp firmware/src/secrets.h.example firmware/src/secrets.h
-```
-Edita `secrets.h` con tus propios valores antes de continuar.
-
-### 3. Cargar el firmware al ESP32
-```bash
-pio run --target upload
-```
-
-### 4. Cargar la interfaz web (sistema de archivos)
-```bash
-pio run --target uploadfs
-```
-
-### 5. Conectarte al robot
-Una vez encendido, el ESP32 crea su propia red WiFi. Conéctate desde tu celular o laptop y abre en el navegador:
-```
-http://192.168.4.1
-```
+- **UART2**: RX2 = GPIO 16, TX2 = GPIO 17.
 
 ---
 
-## Uso
+## Protocolo UART Binario y Medidas de Seguridad
 
-1. **Homing:** al conectarte, presiona "Inicializar Homing" con la plataforma centrada manualmente en la base del cubo. Esto calibra los encoders y aplica la pre-tensión inicial en los 8 cables.
-2. **Mover la plataforma:** una vez listo, usa los sliders de posición (X, Y, Z) y rotación (Roll, Pitch, Yaw) para mover la plataforma en tiempo real.
-3. **Telemetría:** el panel derecho muestra la longitud objetivo y real de cada cable, junto con su nivel de carga (PWM).
-4. **Paro de emergencia:** el botón "PARO DE EMERGENCIA" detiene todos los motores de inmediato.
+La comunicación se realiza mediante tramas binarias compactas para evitar latencias. El cálculo de CRC8 se hace utilizando el polinomio **Dallas/Maxim CRC-8 (0x31)** ($x^8 + x^5 + x^4 + 1$).
 
----
+### 1. Frame de Telemetría (ENCODER -> MAIN, 38 bytes, 1 kHz)
+Calculado sobre los bytes 3 a 36:
+- `SOF 1 & 2`: `0xAA 0xBB`
+- `LENGTH`: `0x20` (32 bytes)
+- `SEQ`: Contador circular de secuencia (0-255)
+- `BOOT_ID`: Generado pseudoaleatoriamente (`esp_random() % 256`) al arrancar el esclavo.
+- `PAYLOAD`: `int32_t[8]` con ticks crudos de encoders.
+- `CRC8`: Byte final.
 
-## Simulación y validación (sin hardware)
+### 2. Frame de Simulación PWM (MAIN -> ENCODER, 37 bytes, 1 kHz, solo en `SIMULATION_MODE=1`)
+Calculado sobre los bytes 3 a 35:
+- `SOF 1 & 2`: `0xCC 0xDD`
+- `LENGTH`: `0x20` (32 bytes)
+- `SEQ`: Contador circular de secuencia (0-255)
+- `PAYLOAD`: `float[8]` con salidas PWM calculadas por el PID.
+- `CRC8`: Byte final.
 
-Si quieres probar la lógica del robot sin tener los motores conectados:
-
-```bash
-pip install pyserial matplotlib
-```
-
-| Script | Qué hace |
-|---|---|
-| `motor_sim.py` | Simula la respuesta del motor + PID para ajustar las ganancias antes de probar en hardware real |
-| `visualizer.py` | Anima en 3D una trayectoria de prueba usando la misma cinemática del firmware |
-| `validation.py` | Compara las longitudes de cable calculadas por el ESP32 (en modo simulación) contra el modelo en Python, para verificar que ambos coincidan |
-
----
-
-## Limitaciones conocidas / Roadmap
-
-- El hardware físico está en proceso de ensamblaje; el firmware se ha validado principalmente en modo simulación.
-- El modelo actual asume que el cable se enrolla en una sola capa sobre el tambor del motor; esto se revisará una vez confirmadas las dimensiones finales del tambor.
-- Próximas mejoras evaluadas: lectura de encoders por hardware (PCNT) y expansión de pines de dirección vía I2C, para liberar pines del ESP32.
+### Medidas de Seguridad del Sistema
+1. **Protección de Enlace UART (Timeout de 50 ms)**: Si el MAIN no recibe tramas válidas del ENCODER por más de 50 ms, transiciona inmediatamente a `STATE_ESTOP` por seguridad.
+2. **Protección contra Reinicio del Esclavo (BOOT_ID)**: El MAIN almacena el `BOOT_ID` inicial durante el homing. Si el ENCODER se reinicia (el `BOOT_ID` cambia), el MAIN fuerza `STATE_ESTOP` para evitar saltos violentos en la estimación de posición.
+3. **Resincronización de Trama por Timeout (5 ms)**: Si se pierde la sincronización de bytes dentro de una trama, el parseador se restablece a los 5 ms de inactividad para no bloquear el control.
+4. **Timeout en Esclavo (50 ms)**: En modo simulación, si el esclavo deja de recibir tramas del maestro por 50 ms, apaga automáticamente todas las entradas PWM a `0.0f` para prevenir runaways inerciales.
 
 ---
 
-## Licencia
+## Compilación y Carga de Firmwares
 
-Este proyecto se distribuye bajo licencia [MIT](./LICENSE).
+El repositorio contiene dos proyectos PlatformIO independientes:
+
+### Carga del Firmware MAIN (Maestro)
+1. Conecta el ESP32 MAIN a tu computadora.
+2. Entra al directorio `firmware-main/` o ábrelo en VS Code.
+3. Compila y carga el firmware:
+   ```bash
+   pio run --target upload
+   ```
+4. Sube la interfaz web a la memoria flash LittleFS:
+   ```bash
+   pio run --target uploadfs
+   ```
+
+### Carga del Firmware ENCODER (Esclavo)
+1. Conecta el ESP32 ENCODER a tu computadora.
+2. Entra al directorio `firmware-encoder/` o ábrelo en VS Code.
+3. Compila y carga el firmware:
+   ```bash
+   pio run --target upload
+   ```
 
 ---
 
-## Autor
+## Simulación y Validación con Python
 
-**Julio Alberto Trejo Cruz** — Ingeniería Mecatrónica, UTSJR.
-Portafolio: [ingjulioalberto.qzz.io](https://ingjulioalberto.qzz.io)
+El contrato del protocolo JSON serie del maestro para telemetría no ha sido alterado, garantizando plena compatibilidad con los scripts de python actuales en `python-sim/` (como `validation.py`, `visualizer.py` y `motor_sim.py`).
 
-¿Preguntas o sugerencias? Abre un [Issue](../../issues) en este repositorio.
+1. Habilita `-DSIMULATION_MODE=1` en los archivos `platformio.ini` de ambos proyectos.
+2. Conéctalos físicamente cruzando los pines RX2 y TX2 con GND común.
+3. Abre el script de validación con Python indicando el puerto de depuración USB del ESP32 MAIN:
+   ```bash
+   python python-sim/validation.py
+   ```
