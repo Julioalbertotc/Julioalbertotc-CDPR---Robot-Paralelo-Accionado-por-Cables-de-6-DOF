@@ -327,12 +327,14 @@ void controlLoopTask(void *pvParameters) {
 
         // 6. Escribir el registro consolidado de direcciones I2C (MCP23017)
 #if !SIMULATION_MODE
-        if (USE_MCP23017) {
-            Wire.beginTransmission(MCP23017_ADDR);
-            Wire.write(0x12); // Registro GPIOA del MCP23017
-            Wire.write(mcp_direction_register);
-            Wire.endTransmission();
+        if (current_state == STATE_ESTOP) {
+            mcp_direction_register = 0x0000;
         }
+        Wire.beginTransmission(MCP23017_ADDR);
+        Wire.write(0x12); // Dirección inicial: Registro GPIOA del MCP23017
+        Wire.write(mcp_direction_register & 0xFF);        // Escribe en GPIOA (bits 0-7)
+        Wire.write((mcp_direction_register >> 8) & 0xFF); // Escribe en GPIOB (bits 8-15)
+        Wire.endTransmission();
 #endif
 
         // 7. Si SIMULATION_MODE = 1, enviar PWMs calculados de vuelta al ENCODER
@@ -357,19 +359,30 @@ void setup() {
     Serial.println("UART2 de interconexión con ESP32 ENCODER inicializado.");
 
 #if !SIMULATION_MODE
-    if (USE_MCP23017) {
-        // Inicializar puerto I2C para el expansor MCP23017
-        Wire.begin(I2C_SDA, I2C_SCL, 400000); // Fast mode 400 kHz
-        
-        // Configurar MCP23017 pines de puerto A (GP0-GP7) como salidas
-        Wire.beginTransmission(MCP23017_ADDR);
-        Wire.write(0x00); // Dirección IODIRA
-        Wire.write(0x00); // Todo salidas
-        Wire.endTransmission();
-        Serial.println("I2C MCP23017 inicializado.");
-    } else {
-        Serial.println("Modo GPIO directo para dirección de motores activo.");
-    }
+    // Inicializar puerto I2C para el expansor MCP23017
+    Wire.begin(I2C_SDA, I2C_SCL, 400000); // Fast mode 400 kHz
+    
+    // Forzar modo BANK=0 en IOCON
+    Wire.beginTransmission(MCP23017_ADDR);
+    Wire.write(0x0B); // Dirección IOCON (válido para BANK=0 y BANK=1)
+    Wire.write(0x00); // BANK=0, SEQOP=0 (auto-incremento habilitado)
+    Wire.endTransmission();
+
+    // Configurar MCP23017 todos los pines (puerto A y B) como salidas
+    Wire.beginTransmission(MCP23017_ADDR);
+    Wire.write(0x00); // Dirección inicial IODIRA del MCP23017
+    Wire.write(0x00); // Configura GPIOA como salidas (todo 0)
+    Wire.write(0x00); // Configura GPIOB como salidas (todo 0)
+    Wire.endTransmission();
+    
+    // Inicializar salidas a LOW (freno activo por defecto)
+    Wire.beginTransmission(MCP23017_ADDR);
+    Wire.write(0x12); // Dirección GPIOA del MCP23017
+    Wire.write(0x00); // Escribe en GPIOA
+    Wire.write(0x00); // Escribe en GPIOB
+    Wire.endTransmission();
+    
+    Serial.println("I2C MCP23017 inicializado en modo de 16 bits (BANK=0).");
     
     // Inicializar pin de desactivación de drivers TB6612FNG (Standby)
     pinMode(STBY_PIN, OUTPUT);

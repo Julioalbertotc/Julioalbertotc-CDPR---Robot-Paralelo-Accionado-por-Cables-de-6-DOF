@@ -31,8 +31,6 @@
 // =============================================================================
 // DIRECCIÓN I2C Y PINES DE EXPANSOR / SEGURIDAD
 // =============================================================================
-#define USE_MCP23017 1 // 1 para usar el expansor I2C MCP23017, 0 para usar GPIOs directos
-
 #define I2C_SDA 21
 #define I2C_SCL 22
 #define MCP23017_ADDR 0x20
@@ -79,24 +77,24 @@ const Vector3D DEFAULT_START_POSE_ROT = {0.0f, 0.0f, 0.0f};
 // =============================================================================
 // Cada motor tiene:
 // - pwm: Pin de PWM directo del ESP32 (8 pines independientes).
-// - dir_mcp: Índice del bit en el MCP23017 (0 a 7).
-// - dir_gpio: Pin GPIO de dirección directo en el ESP32 (cuando USE_MCP23017 = 0).
+// - dir_in1_bit: Índice del bit en el MCP23017 para la señal IN1 (0 a 15).
+// - dir_in2_bit: Índice del bit en el MCP23017 para la señal IN2 (0 a 15).
 struct MotorPins {
     uint8_t pwm;
-    uint8_t dir_mcp;
-    uint8_t dir_gpio;
+    uint8_t dir_in1_bit;
+    uint8_t dir_in2_bit;
 };
 
 const MotorPins MOTOR_PINS[8] = {
-    // Motor, PWM Pin, Bit MCP, GPIO Dirección (si no se usa MCP)
-    { 2,  0, 4 },
-    { 12, 1, 13 },
-    { 14, 2, 15 },
-    { 23, 3, 26 }, // Modificado para evitar GPIO 16 (UART RX2)
-    { 27, 4, 32 }, // Modificado para evitar GPIO 17 (UART TX2)
-    { 18, 5, 33 },
-    { 19, 6, 21 }, // Si no se usa MCP, podemos usar pines I2C para DIR
-    { 25, 7, 22 }
+    // Motor, PWM Pin, Bit MCP IN1, Bit MCP IN2
+    { 2,   0,  1 }, // Motor 0
+    { 12,  2,  3 }, // Motor 1
+    { 14,  4,  5 }, // Motor 2
+    { 23,  6,  7 }, // Motor 3
+    { 27,  8,  9 }, // Motor 4
+    { 18, 10, 11 }, // Motor 5
+    { 19, 12, 13 }, // Motor 6
+    { 25, 14, 15 }  // Motor 7
 };
 
 // =============================================================================

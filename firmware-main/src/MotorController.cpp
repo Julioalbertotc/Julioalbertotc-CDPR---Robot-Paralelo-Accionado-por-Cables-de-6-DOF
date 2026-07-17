@@ -13,12 +13,6 @@ void MotorController::begin(int motor_id) {
 #if !SIMULATION_MODE
     // Configurar PWM por hardware usando LEDC
     ledcAttach(pins.pwm, 20000, 8); // Pin, 20 kHz, 8 bits
-    
-    // Si no se usa MCP23017, inicializar los pines directos de dirección
-    if (!USE_MCP23017) {
-        pinMode(pins.dir_gpio, OUTPUT);
-        digitalWrite(pins.dir_gpio, LOW);
-    }
 #endif
 
     raw_ticks = 0;
@@ -86,15 +80,19 @@ void MotorController::update(float dt) {
     int pwm_val = (int)abs(pwm_output);
     ledcWrite(pins.pwm, pwm_val);
     
-    // Actualizar registro de dirección
-    if (USE_MCP23017) {
-        if (pwm_output >= 0.0f) {
-            mcp_direction_register |= (1 << pins.dir_mcp);
-        } else {
-            mcp_direction_register &= ~(1 << pins.dir_mcp);
-        }
+    // Actualizar registro de dirección de 16 bits para el MCP23017
+    if (pwm_output > 0.0f) {
+        // Giro adelante: IN1 = HIGH, IN2 = LOW
+        mcp_direction_register |= (1 << pins.dir_in1_bit);
+        mcp_direction_register &= ~(1 << pins.dir_in2_bit);
+    } else if (pwm_output < 0.0f) {
+        // Giro atrás: IN1 = LOW, IN2 = HIGH
+        mcp_direction_register &= ~(1 << pins.dir_in1_bit);
+        mcp_direction_register |= (1 << pins.dir_in2_bit);
     } else {
-        digitalWrite(pins.dir_gpio, pwm_output >= 0.0f ? HIGH : LOW);
+        // Freno activo (Short brake): IN1 = LOW, IN2 = LOW
+        mcp_direction_register &= ~(1 << pins.dir_in1_bit);
+        mcp_direction_register &= ~(1 << pins.dir_in2_bit);
     }
 #endif
 }

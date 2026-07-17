@@ -26,20 +26,72 @@ El sistema físico se compone de:
 
 ### Tabla de Asignación de Pines - ESP32 MAIN/MOTOR
 
-| Motor | PWM Pin (Salida) | Bit de Expansor MCP23017 | GPIO Dirección (Si `USE_MCP23017=0`) |
-| :--- | :--- | :--- | :--- |
-| **Motor 0** | GPIO 2 | Bit 0 | GPIO 4 |
-| **Motor 1** | GPIO 12 | Bit 1 | GPIO 13 |
-| **Motor 2** | GPIO 14 | Bit 2 | GPIO 15 |
-| **Motor 3** | GPIO 23 | Bit 3 | GPIO 26 |
-| **Motor 4** | GPIO 27 | Bit 4 | GPIO 32 |
-| **Motor 5** | GPIO 18 | Bit 5 | GPIO 33 |
-| **Motor 6** | GPIO 19 | Bit 6 | GPIO 21 |
-| **Motor 7** | GPIO 25 | Bit 7 | GPIO 22 |
-| **STBY** | GPIO 5 (Desactivación de H-bridge en hardware) | - | - |
+La dirección de cada motor se controla a través de dos señales (IN1 e IN2) utilizando el expansor I2C MCP23017 de 16 bits. La línea STBY de los 4 breakouts TB6612FNG está unificada físicamente en el GPIO 5 para permitir un apagado instantáneo (ESTOP) redundante por hardware.
 
-- **I2C**: SDA = GPIO 21, SCL = GPIO 22 (Sólo si `USE_MCP23017 = 1` en `Config.h`).
+| Motor | PWM Pin (ESP32) | Bit MCP23017 (IN1) | Bit MCP23017 (IN2) | Canal Físico / Breakout | Puerto y Pin del MCP23017 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Motor 0** | GPIO 2 | Bit 0 | Bit 1 | Breakout 1 - Canal A | GPA0 (Pin 21) y GPA1 (Pin 22) |
+| **Motor 1** | GPIO 12 | Bit 2 | Bit 3 | Breakout 1 - Canal B | GPA2 (Pin 23) y GPA3 (Pin 24) |
+| **Motor 2** | GPIO 14 | Bit 4 | Bit 5 | Breakout 2 - Canal A | GPA4 (Pin 25) y GPA5 (Pin 26) |
+| **Motor 3** | GPIO 23 | Bit 6 | Bit 7 | Breakout 2 - Canal B | GPA6 (Pin 27) y GPA7 (Pin 28) |
+| **Motor 4** | GPIO 27 | Bit 8 | Bit 9 | Breakout 3 - Canal A | GPB0 (Pin 1) y GPB1 (Pin 2) |
+| **Motor 5** | GPIO 18 | Bit 10 | Bit 11 | Breakout 3 - Canal B | GPB2 (Pin 3) y GPB3 (Pin 4) |
+| **Motor 6** | GPIO 19 | Bit 12 | Bit 13 | Breakout 4 - Canal A | GPB4 (Pin 5) y GPB5 (Pin 6) |
+| **Motor 7** | GPIO 25 | Bit 14 | Bit 15 | Breakout 4 - Canal B | GPB6 (Pin 7) y GPB7 (Pin 8) |
+| **STBY (Unificado)** | GPIO 5 | - | - | Desactivación global | Controla STBY de los 4 breakouts |
+
+- **I2C**: SDA = GPIO 21, SCL = GPIO 22 (Siempre activo para el control del MCP23017).
 - **UART2**: RX2 = GPIO 16, TX2 = GPIO 17.
+
+### Diagrama de Conexión de Controladores TB6612FNG y MCP23017
+
+```text
+       [ ESP32 MAIN ]                       [ MCP23017 ]
+        GPIO 21 (SDA) <====================> Pin 13 (SDA)
+        GPIO 22 (SCL) <====================> Pin 12 (SCL)
+        GPIO 5  (STBY) ---------------------+
+                                            |
+       [ ALIMENTACIÓN ]                     |
+        VM (12V Motor)                      |
+        VCC (5V/3.3V Logic)                 |
+        GND --------------------+           |
+                                |           |
+       +------------------------V-----------V-----------------------+
+       |   Breakouts Físicos TB6612FNG (1 al 4)                     |
+       |                                                            |
+       |   +------------------+         +------------------+        |
+       |   |   Breakout #1    |         |   Breakout #2    |        |
+       |   | VM, VCC, GND     |         | VM, VCC, GND     |        |
+       |   | STBY <-----------|---------| STBY <-----------|--------| (Desde GPIO 5)
+       |   |                  |         |                  |        |
+       |   | PWMA <--- GPIO 2 |         | PWMA <--- GPIO 14|        |
+       |   | AIN1 <--- GPA0   |         | AIN1 <--- GPA4   |        |
+       |   | AIN2 <--- GPA1   |         | AIN2 <--- GPA5   |        |
+       |   | AO1/AO2 -> Mot 0 |         | AO1/AO2 -> Mot 2 |        |
+       |   |                  |         |                  |        |
+       |   | PWMB <--- GPIO 12|         | PWMB <--- GPIO 23|        |
+       |   | BIN1 <--- GPA2   |         | BIN1 <--- GPA6   |        |
+       |   | BIN2 <--- GPA3   |         | BIN2 <--- GPA7   |        |
+       |   | BO1/BO2 -> Mot 1 |         | BO1/BO2 -> Mot 3 |        |
+       |   +------------------+         +------------------+        |
+       |                                                            |
+       |   +------------------+         +------------------+        |
+       |   |   Breakout #3    |         |   Breakout #4    |        |
+       |   | VM, VCC, GND     |         | VM, VCC, GND     |        |
+       |   | STBY <-----------|---------| STBY <-----------|--------| (Desde GPIO 5)
+       |   |                  |         |                  |        |
+       |   | PWMA <--- GPIO 27|         | PWMA <--- GPIO 19|        |
+       |   | AIN1 <--- GPB0   |         | AIN1 <--- GPB4   |        |
+       |   | AIN2 <--- GPB1   |         | AIN2 <--- GPB5   |        |
+       |   | AO1/AO2 -> Mot 4 |         | AO1/AO2 -> Mot 6 |        |
+       |   |                  |         |                  |        |
+       |   | PWMB <--- GPIO 18|         | PWMB <--- GPIO 25|        |
+       |   | BIN1 <--- GPB2   |         | BIN1 <--- GPB6   |        |
+       |   | BIN2 <--- GPB3   |         | BIN2 <--- GPB7   |        |
+       |   | BO1/BO2 -> Mot 5 |         | BO1/BO2 -> Mot 7 |        |
+       |   +------------------+         +------------------+        |
+       +------------------------------------------------------------+
+```
 
 ---
 
