@@ -9,6 +9,10 @@
 #include "Globals.h"
 #include "WebInterface.h"
 
+#if !SIMULATION_MODE
+#include "driver/pcnt.h"
+#endif
+
 // =============================================================================
 // VARIABLES GLOBALES DE UART Y PROTECCIÓN
 // =============================================================================
@@ -32,7 +36,7 @@ uint8_t calculateCRC8(const uint8_t *data, size_t len) {
             uint8_t mix = (crc ^ inbyte) & 0x01;
             crc >>= 1;
             if (mix) {
-                crc ^= 0x8C; // PolinomioDallas/Maxim reflejado
+                crc ^= 0x8C; // Polinomio Dallas/Maxim reflejado
             }
             inbyte >>= 1;
         }
@@ -41,9 +45,8 @@ uint8_t calculateCRC8(const uint8_t *data, size_t len) {
 }
 
 // =============================================================================
-// TRANSMISIÓN DE PWM EN MODO SIMULACIÓN (MAIN -> ENCODER)
+// TRANSMISIÓN DE PWM Y DIRECCIÓN AL ESP32 SUB (Motores 4 a 7)
 // =============================================================================
-#if SIMULATION_MODE
 void transmitPWMToEncoder() {
     static uint8_t tx_seq = 0;
     uint8_t tx_frame[37];
@@ -66,7 +69,6 @@ void transmitPWMToEncoder() {
     Serial2.write(tx_frame, 37);
     tx_seq++;
 }
-#endif
 
 // =============================================================================
 // PARSER NO BLOQUEANTE DE TELEMETRÍA (ENCODER -> MAIN)
@@ -157,7 +159,20 @@ void parseIncomingUART() {
                     if (calc_crc == rx_crc) {
                         // Sección crítica rápida para actualizar valores globales
                         portENTER_CRITICAL(&uartMux);
-                        memcpy((void*)uart_raw_ticks, rx_buffer, 32);
+                        int32_t rx_ticks[8];
+                        memcpy(rx_ticks, rx_buffer, 32);
+                        #if SIMULATION_MODE
+                        // En modo simulación copiamos los 8 encoders desde el modelo físico del esclavo
+                        for (int i = 0; i < 8; i++) {
+                            uart_raw_ticks[i] = rx_ticks[i];
+                        }
+                        #else
+                        // En modo real, los encoders 0-3 son leídos localmente por PCNT en MAIN.
+                        // Solo copiamos los encoders remotos 4-7 recibidos por UART.
+                        for (int i = 4; i < 8; i++) {
+                            uart_raw_ticks[i] = rx_ticks[i];
+                        }
+                        #endif
                         uart_boot_id = rx_boot_id;
                         last_valid_frame_time = now;
                         portEXIT_CRITICAL(&uartMux);
@@ -181,6 +196,38 @@ void parseIncomingUART() {
 }
 
 // =============================================================================
+// INICIALIZACIÓN DE CONTADORES DE HARDWARE PCNT (Solo en modo físico)
+// =============================================================================
+#if !SIMULATION_MODE
+void initPCNT() {
+    for (int i = 0; i < 8; i++) {
+        if (!MOTOR_PINS[i].is_local) continue;
+        
+        pcnt_config_t pcnt_config;
+        pcnt_config.pulse_gpio_num = MOTOR_PINS[i].encA;
+        pcnt_config.ctrl_gpio_num = MOTOR_PINS[i].encB;
+        pcnt_config.channel = PCNT_CHANNEL_0;
+        pcnt_config.unit = (pcnt_unit_t)MOTOR_PINS[i].pcnt_unit;
+        
+        pcnt_config.pos_mode = PCNT_COUNT_INC;  
+        pcnt_config.neg_mode = PCNT_COUNT_DEC;  
+        
+        pcnt_config.lctrl_mode = PCNT_MODE_KEEP;    
+        pcnt_config.hctrl_mode = PCNT_MODE_REVERSE; 
+        
+        pcnt_config.counter_h_lim = 32767;
+        pcnt_config.counter_l_lim = -32768;
+        
+        pcnt_unit_config(&pcnt_config);
+        
+        pcnt_counter_pause((pcnt_unit_t)MOTOR_PINS[i].pcnt_unit);
+        pcnt_counter_clear((pcnt_unit_t)MOTOR_PINS[i].pcnt_unit);
+        pcnt_counter_resume((pcnt_unit_t)MOTOR_PINS[i].pcnt_unit);
+    }
+}
+#endif
+
+// =============================================================================
 // NÚCLEO 2: TAREA DE CONTROL DE LAZO CERRADO (1 kHz)
 // =============================================================================
 void controlLoopTask(void *pvParameters) {
@@ -192,48 +239,64 @@ void controlLoopTask(void *pvParameters) {
     while (true) {
         float dt = 1.0f / (float)CONTROL_LOOP_HZ;
 
-        // 1. Sección Crítica Rápida: Copiar valores del búfer UART
-        int32_t local_raw[8];
+        // 1. Leer encoders locales (si es modo real)
+        int32_t local_raw[8] = {0};
+        #if !SIMULATION_MODE
+        for (int i = 0; i < 8; i++) {
+            if (MOTOR_PINS[i].is_local) {
+                int16_t raw_count = 0;
+                pcnt_get_counter_value((pcnt_unit_t)MOTOR_PINS[i].pcnt_unit, &raw_count);
+                local_raw[i] = raw_count;
+            }
+        }
+        #endif
+
+        // 2. Sección Crítica Rápida: Copiar valores del búfer UART
         uint8_t local_boot_id;
         uint32_t last_rx;
         
         portENTER_CRITICAL(&uartMux);
+        #if SIMULATION_MODE
         for (int i = 0; i < 8; i++) {
             local_raw[i] = uart_raw_ticks[i];
         }
+        #else
+        for (int i = 4; i < 8; i++) {
+            local_raw[i] = uart_raw_ticks[i]; // Carga encoders remotos 4-7
+        }
+        #endif
         local_boot_id = uart_boot_id;
         last_rx = last_valid_frame_time;
         portEXIT_CRITICAL(&uartMux);
 
-        // 2. Manejo del Paro de Emergencia por Comando
+        // 3. Manejo del Paro de Emergencia por Comando
         if (request_estop) {
             current_state = STATE_ESTOP;
             request_estop = false;
         }
 
-        // 3. Monitoreo de timeout UART (50 ms)
+        // 4. Monitoreo de timeout UART (50 ms)
         if (millis() - last_rx > 50) {
             current_state = STATE_ESTOP;
         }
 
-        // 4. Pasar ticks crudos a las instancias de controlador
+        // 5. Pasar ticks crudos a las instancias de controlador
         for (int i = 0; i < 8; i++) {
             motors[i].setRawTicks(local_raw[i]);
         }
 
-        // 5. Ejecutar máquina de estados de control y STBY físico
+        // 6. Ejecutar máquina de estados de control y STBY físico local
         if (current_state == STATE_ESTOP) {
 #if !SIMULATION_MODE
-            digitalWrite(STBY_PIN, LOW); // Apagado instantáneo de puentes H
+            digitalWrite(STBY_PIN, LOW); // Apagado instantáneo de puentes H locales
 #endif
             for (int i = 0; i < 8; i++) {
-                // Mantener posición actual como target
                 motors[i].setTargetTicks(motors[i].getCurrentTicks());
                 motors[i].update(dt);
             }
         } else {
 #if !SIMULATION_MODE
-            digitalWrite(STBY_PIN, HIGH); // Habilitar puentes H
+            digitalWrite(STBY_PIN, HIGH); // Habilitar puentes H locales
 #endif
             switch (current_state) {
                 case STATE_UNHOMED:
@@ -247,7 +310,6 @@ void controlLoopTask(void *pvParameters) {
                         request_homing = false;
                         homing_timer = 0;
                         
-                        // Guardar BOOT_ID inicial y aplicar offset local
                         active_boot_id = local_boot_id;
                         boot_id_initialized = true;
                         
@@ -290,11 +352,11 @@ void controlLoopTask(void *pvParameters) {
                     break;
 
                 case STATE_READY:
-                    // Validación de protección de reinicio del ENCODER
+                    // Validación de protección de reinicio del ENCODER/SUB
                     if (boot_id_initialized && (local_boot_id != active_boot_id)) {
                         current_state = STATE_ESTOP;
                         boot_id_initialized = false; 
-                        Serial.println("[ALERTA CRÍTICA] Se detectó reinicio del ESP32 ENCODER. E-STOP forzado.");
+                        Serial.println("[ALERTA CRÍTICA] Se detectó reinicio del ESP32 SUB. E-STOP forzado.");
                     }
 
                     if (request_center) {
@@ -325,22 +387,8 @@ void controlLoopTask(void *pvParameters) {
             }
         }
 
-        // 6. Escribir el registro consolidado de direcciones I2C (MCP23017)
-#if !SIMULATION_MODE
-        if (current_state == STATE_ESTOP) {
-            mcp_direction_register = 0x0000;
-        }
-        Wire.beginTransmission(MCP23017_ADDR);
-        Wire.write(0x12); // Dirección inicial: Registro GPIOA del MCP23017
-        Wire.write(mcp_direction_register & 0xFF);        // Escribe en GPIOA (bits 0-7)
-        Wire.write((mcp_direction_register >> 8) & 0xFF); // Escribe en GPIOB (bits 8-15)
-        Wire.endTransmission();
-#endif
-
-        // 7. Si SIMULATION_MODE = 1, enviar PWMs calculados de vuelta al ENCODER
-#if SIMULATION_MODE
+        // 7. Enviar PWMs calculados de vuelta al ESP32 SUB siempre (para simulación y motores físicos 4-7)
         transmitPWMToEncoder();
-#endif
 
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
@@ -356,38 +404,17 @@ void setup() {
 
     // Inicializar UART2 de interconexión
     Serial2.begin(INTERCONNECT_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-    Serial.println("UART2 de interconexión con ESP32 ENCODER inicializado.");
+    Serial.println("UART2 de interconexión con ESP32 SUB inicializado.");
 
 #if !SIMULATION_MODE
-    // Inicializar puerto I2C para el expansor MCP23017
-    Wire.begin(I2C_SDA, I2C_SCL, 400000); // Fast mode 400 kHz
-    
-    // Forzar modo BANK=0 en IOCON
-    Wire.beginTransmission(MCP23017_ADDR);
-    Wire.write(0x0B); // Dirección IOCON (válido para BANK=0 y BANK=1)
-    Wire.write(0x00); // BANK=0, SEQOP=0 (auto-incremento habilitado)
-    Wire.endTransmission();
-
-    // Configurar MCP23017 todos los pines (puerto A y B) como salidas
-    Wire.beginTransmission(MCP23017_ADDR);
-    Wire.write(0x00); // Dirección inicial IODIRA del MCP23017
-    Wire.write(0x00); // Configura GPIOA como salidas (todo 0)
-    Wire.write(0x00); // Configura GPIOB como salidas (todo 0)
-    Wire.endTransmission();
-    
-    // Inicializar salidas a LOW (freno activo por defecto)
-    Wire.beginTransmission(MCP23017_ADDR);
-    Wire.write(0x12); // Dirección GPIOA del MCP23017
-    Wire.write(0x00); // Escribe en GPIOA
-    Wire.write(0x00); // Escribe en GPIOB
-    Wire.endTransmission();
-    
-    Serial.println("I2C MCP23017 inicializado en modo de 16 bits (BANK=0).");
-    
-    // Inicializar pin de desactivación de drivers TB6612FNG (Standby)
+    // Inicializar pin de desactivación de drivers TB6612FNG locales (Standby)
     pinMode(STBY_PIN, OUTPUT);
     digitalWrite(STBY_PIN, HIGH); // Puentes H activos por defecto
-    Serial.println("Pin Standby de hardware inicializado.");
+    Serial.println("Pin Standby local inicializado.");
+    
+    // Inicializar hardware PCNT para los encoders locales
+    initPCNT();
+    Serial.println("PCNT inicializado para encoders locales 0 a 3.");
 #endif
 
     // Inicializar motores
@@ -396,9 +423,9 @@ void setup() {
     }
 
 #if !SIMULATION_MODE
-    Serial.println("Motores configurados por hardware.");
+    Serial.println("Motores locales configurados por hardware.");
 #else
-    Serial.println("MODO SIMULACIÓN ACTIVO: Los motores y encoders se simulan en la placa ENCODER.");
+    Serial.println("MODO SIMULACIÓN ACTIVO: Los motores y encoders se simulan en la placa SUB.");
 #endif
 
     // Inicialización del WiFi en modo Punto de Acceso (AP)

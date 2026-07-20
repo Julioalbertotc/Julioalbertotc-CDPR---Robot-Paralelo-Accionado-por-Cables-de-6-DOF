@@ -37,9 +37,9 @@ uint8_t calculateCRC8(const uint8_t *data, size_t len) {
 }
 
 // =============================================================================
-// PARSER DE UART PARA CONSIGNAS PWM (MAIN -> ENCODER, solo en SIMULATION_MODE)
+// PARSER DE UART PARA CONSIGNAS PWM (MAIN -> SUB)
+// Recibe consignas en modo simulación y modo real para aplicar a motores remotos
 // =============================================================================
-#if SIMULATION_MODE
 enum ParserState {
     STATE_SEARCH_SOF1,
     STATE_SEARCH_SOF2,
@@ -50,7 +50,7 @@ enum ParserState {
 };
 
 ParserState parser_state = STATE_SEARCH_SOF1;
-uint8_t rx_buffer[32]; // Payload de 32 bytes
+uint8_t rx_buffer[32]; // Payload de 32 bytes (float[8])
 int rx_index = 0;
 uint32_t last_rx_byte_time = 0;
 float rx_pwms[8] = {0.0f};
@@ -125,6 +125,7 @@ void parseIncomingUART() {
     }
 }
 
+#if SIMULATION_MODE
 void simulateStep(int i, float pwm_val, float dt) {
     float v_in = (pwm_val / 255.0f) * SIM_VOLTAGE;
     
@@ -150,11 +151,13 @@ void simulateStep(int i, float pwm_val, float dt) {
 #if !SIMULATION_MODE
 void initPCNT() {
     for (int i = 0; i < 8; i++) {
+        if (!MOTOR_PINS[i].is_local) continue;
+        
         pcnt_config_t pcnt_config;
-        pcnt_config.pulse_gpio_num = ENCODER_PINS[i].encA;
-        pcnt_config.ctrl_gpio_num = ENCODER_PINS[i].encB;
+        pcnt_config.pulse_gpio_num = MOTOR_PINS[i].encA;
+        pcnt_config.ctrl_gpio_num = MOTOR_PINS[i].encB;
         pcnt_config.channel = PCNT_CHANNEL_0;
-        pcnt_config.unit = (pcnt_unit_t)ENCODER_PINS[i].pcnt_unit;
+        pcnt_config.unit = (pcnt_unit_t)MOTOR_PINS[i].pcnt_unit;
         
         pcnt_config.pos_mode = PCNT_COUNT_INC;  
         pcnt_config.neg_mode = PCNT_COUNT_DEC;  
@@ -167,9 +170,59 @@ void initPCNT() {
         
         pcnt_unit_config(&pcnt_config);
         
-        pcnt_counter_pause((pcnt_unit_t)ENCODER_PINS[i].pcnt_unit);
-        pcnt_counter_clear((pcnt_unit_t)ENCODER_PINS[i].pcnt_unit);
-        pcnt_counter_resume((pcnt_unit_t)ENCODER_PINS[i].pcnt_unit);
+        pcnt_counter_pause((pcnt_unit_t)MOTOR_PINS[i].pcnt_unit);
+        pcnt_counter_clear((pcnt_unit_t)MOTOR_PINS[i].pcnt_unit);
+        pcnt_counter_resume((pcnt_unit_t)MOTOR_PINS[i].pcnt_unit);
+    }
+}
+
+// Inicializa pines de dirección, PWM y STBY de motores locales (4-7)
+void initLocalMotors() {
+    pinMode(STBY_PIN, OUTPUT);
+    digitalWrite(STBY_PIN, LOW); // Apagado por defecto
+
+    for (int i = 0; i < 8; i++) {
+        if (MOTOR_PINS[i].is_local) {
+            ledcAttach(MOTOR_PINS[i].pwm, 20000, 8); // 20 kHz, 8 bits
+            pinMode(MOTOR_PINS[i].dir1, OUTPUT);
+            pinMode(MOTOR_PINS[i].dir2, OUTPUT);
+            digitalWrite(MOTOR_PINS[i].dir1, LOW);
+            digitalWrite(MOTOR_PINS[i].dir2, LOW);
+        }
+    }
+}
+
+// Aplica las consignas de PWM recibidas a los pines locales
+void updateLocalMotors(bool timeout_active) {
+    if (timeout_active) {
+        digitalWrite(STBY_PIN, LOW); // Apagado de emergencia
+        for (int i = 0; i < 8; i++) {
+            if (MOTOR_PINS[i].is_local) {
+                ledcWrite(MOTOR_PINS[i].pwm, 0);
+                digitalWrite(MOTOR_PINS[i].dir1, LOW);
+                digitalWrite(MOTOR_PINS[i].dir2, LOW);
+            }
+        }
+    } else {
+        digitalWrite(STBY_PIN, HIGH); // Habilitado
+        for (int i = 0; i < 8; i++) {
+            if (MOTOR_PINS[i].is_local) {
+                float pwm_output = rx_pwms[i];
+                int pwm_val = (int)abs(pwm_output);
+                ledcWrite(MOTOR_PINS[i].pwm, pwm_val);
+                
+                if (pwm_output > 0.0f) {
+                    digitalWrite(MOTOR_PINS[i].dir1, HIGH);
+                    digitalWrite(MOTOR_PINS[i].dir2, LOW);
+                } else if (pwm_output < 0.0f) {
+                    digitalWrite(MOTOR_PINS[i].dir1, LOW);
+                    digitalWrite(MOTOR_PINS[i].dir2, HIGH);
+                } else {
+                    digitalWrite(MOTOR_PINS[i].dir1, LOW);
+                    digitalWrite(MOTOR_PINS[i].dir2, LOW);
+                }
+            }
+        }
     }
 }
 #endif
@@ -185,12 +238,14 @@ void encoderTask(void *pvParameters) {
     while (true) {
         int32_t current_ticks[8] = {0};
 
-        #if SIMULATION_MODE
-        // Leer y parsear entrada de PWMs de forma no bloqueante
+        // 1. Leer y parsear entrada de PWMs de forma no bloqueante
         parseIncomingUART();
         
-        // Timeout de seguridad en simulación: si no llega PWM, forzar a 0.0f
-        if (millis() - last_valid_pwm_time > 50) {
+        // 2. Determinar si hay timeout en la recepción de consignas (50 ms)
+        bool timeout_active = (millis() - last_valid_pwm_time > 50);
+        
+        #if SIMULATION_MODE
+        if (timeout_active) {
             for (int i = 0; i < 8; i++) {
                 rx_pwms[i] = 0.0f;
             }
@@ -203,11 +258,18 @@ void encoderTask(void *pvParameters) {
             current_ticks[i] = sim_motors[i].ticks;
         }
         #else
-        // Leer valores físicos desde PCNT
+        // Aplicar PWM y direcciones físicamente a motores locales (M4-M7)
+        updateLocalMotors(timeout_active);
+
+        // Leer valores físicos locales desde contadores PCNT
         for (int i = 0; i < 8; i++) {
-            int16_t raw_count = 0;
-            pcnt_get_counter_value((pcnt_unit_t)ENCODER_PINS[i].pcnt_unit, &raw_count);
-            current_ticks[i] = raw_count;
+            if (MOTOR_PINS[i].is_local) {
+                int16_t raw_count = 0;
+                pcnt_get_counter_value((pcnt_unit_t)MOTOR_PINS[i].pcnt_unit, &raw_count);
+                current_ticks[i] = raw_count;
+            } else {
+                current_ticks[i] = 0; // Motores remotos se inicializan en 0
+            }
         }
         #endif
 
@@ -242,12 +304,13 @@ void setup() {
     // Generación del BOOT_ID pseudoaleatorio único
     boot_id = (uint8_t)(esp_random() % 256);
     
-    Serial.print("--- CDPR ENCODER SLAVE INITIALIZED ---\n");
+    Serial.print("--- CDPR SUB SLAVE INITIALIZED ---\n");
     Serial.printf("BOOT_ID asignado: 0x%02X\n", boot_id);
 
     #if !SIMULATION_MODE
     initPCNT();
-    Serial.println("Hardware PCNT configurado para los 8 encoders.");
+    initLocalMotors();
+    Serial.println("Hardware PCNT e I/O de motores locales inicializados.");
     #else
     Serial.println("MODO SIMULACIÓN ACTIVO (Slave): Simulando física del motor por software.");
     #endif

@@ -1,179 +1,219 @@
-# CDPR - Robot Paralelo Accionado por Cables de 6-DOF (Arquitectura Dual ESP32)
+# CDPR - Robot Paralelo Accionado por Cables de 6-DOF
+## Arquitectura Simétrica Dual ESP32 (Sin Expansor de Pines)
 
-Este repositorio contiene la arquitectura de software completa para un Robot Paralelo Accionado por Cables (CDPR) de 6 grados de libertad (X, Y, Z, Roll, Pitch, Yaw) controlado por una arquitectura de **dos placas ESP32** interconectadas por un bus UART binario de alta velocidad (921600 bps).
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-La división del control optimiza la disponibilidad de pines y recursos de hardware dedicando un microcontrolador exclusivamente a la lectura de encoders (esclavo) y otro a la cinemática inversa, control PID, WiFi y servidor web (maestro).
+Este repositorio contiene la arquitectura de control y firmware definitiva para un Robot Paralelo Accionado por Cables (CDPR - Cable-Driven Parallel Robot) de 6 grados de libertad (X, Y, Z, Roll, Pitch, Yaw). La plataforma física emplea 8 cables de tracción independientes accionados por motores DC con encoders ópticos de cuadratura y controladores de potencia TB6612FNG.
+
+La arquitectura de hardware elimina la necesidad de expansores de pines externos (como el MCP23017), distribuyendo la carga de I/O de manera balanceada y simétrica en **dos módulos ESP32 interconectados**.
 
 ---
 
-## Arquitectura de Hardware y Pines
+## 2. Arquitectura General
 
-El sistema físico se compone de:
-1. **ESP32 MAIN/MOTOR (Maestro)**: Se encarga de la cinemática inversa, del lazo PID de posición a 1 kHz, de la máquina de estados, del servidor web/WebSocket y de la conexión serial JSON para validación con PC.
-2. **ESP32 ENCODER (Esclavo)**: Lee las 8 unidades de contadores hardware PCNT para los encoders y las envía vía UART al maestro a 1 kHz.
+El sistema distribuye el control y la lectura física de forma simétrica entre las dos placas:
+*   **ESP32 MAIN (Maestro):** Gestiona los **Motores 0 a 3** (PWM, dirección y encoders) de manera local. Además de su rol local, centraliza el lazo de control PID a 1 kHz, calcula la cinemática inversa y aloja la interfaz web/WebSocket y la API de comunicación JSON Serial para la PC.
+*   **ESP32 SUB/ENCODER (Esclavo):** Gestiona los **Motores 4 a 7** (PWM, dirección y encoders) de manera local. Recibe las consignas de PWM desde el Maestro y le transmite el conteo físico de sus encoders a través de una comunicación UART de alta velocidad a 921600 bps.
 
-### Diagrama de Conexiones UART
+```mermaid
+graph TD
+    %% Bloques de Entrada y Lectura de Encoders
+    subgraph ESP32_SUB [ESP32 SUB / ESCLAVO]
+        EncS[Encoders Locales M4-M7] -->|Hardware PCNT| CntS[Conteo de Encoders 4-7]
+        ActS[Actuadores Locales M4-M7]
+        StbyS[STBY local]
+    end
+
+    subgraph ESP32_MAIN [ESP32 MAIN / MAESTRO]
+        EncM[Encoders Locales M0-M3] -->|Hardware PCNT| CntM[Conteo de Encoders 0-3]
+        ActM[Actuadores Locales M0-M3]
+        StbyM[STBY local]
+        
+        %% Bloque de Control PID
+        PID[Lazo de Control PID Centralizado 1kHz]
+        Kin[Cinemática Inversa 6-DOF]
+    end
+
+    %% Flujo UART
+    CntS -->|UART2: Telemetría Encoders 4-7| PID
+    PID -->|Cálculo Cinemático| Kin
+    PID -->|Aplicación Directa| ActM
+    PID -->|UART2: Consignas PWM M4-M7| ActS
+
+    %% Servidores e Interfaces
+    Web[Interfaz Web / WebSockets] <-->|Comandos y Estado| ESP32_MAIN
+    PC[PC / Python Simulator] <-->|JSON Serial| ESP32_MAIN
+```
 
 > [!IMPORTANT]
-> El cable de interconexión UART entre ambos ESP32 debe tener las líneas TX/RX cruzadas y es **estrictamente obligatorio compartir la línea GND (Tierra común)** para que el flujo de datos no se corrompa debido a diferencias de potencial.
+> **Control 100% Nativo:** Este diseño prescinde por completo de expansores I2C (como el MCP23017) o periféricos externos. Toda la señalización se genera a nivel de registros GPIO nativos utilizando los recursos internos del microcontrolador (módulos de PWM `ledc` y contadores de pulsos `PCNT`).
+
+---
+
+## 3. Tabla Completa de Asignación de Pines
+
+Dado que el diseño es simétrico, ambas placas se conectan eléctricamente a sus respectivos componentes usando la misma matriz de pines. **Es estrictamente recomendable etiquetar físicamente cada placa para evitar confusiones de cableado.**
+
+### Placa 1: ESP32 MAIN (Maestro) - Motores 0 a 3
+| Canal Lógico | PWM Pin | IN1 | IN2 | Enc A | Enc B | Unidad PCNT | Notas / Strapping |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Motor 0 (M0)** | GPIO 2 | GPIO 4 | GPIO 15 | GPIO 34 | GPIO 35 | PCNT 0 | GPIO 2 y 15 son Strapping |
+| **Motor 1 (M1)** | GPIO 12 | GPIO 13 | GPIO 14 | GPIO 36 | GPIO 39 | PCNT 1 | GPIO 12 es Strapping (MTDI) |
+| **Motor 2 (M2)** | GPIO 25 | GPIO 26 | GPIO 27 | GPIO 32 | GPIO 33 | PCNT 2 | GPIO estándar |
+| **Motor 3 (M3)** | GPIO 18 | GPIO 19 | GPIO 23 | GPIO 21 | GPIO 22 | PCNT 3 | GPIO estándar |
+
+### Placa 2: ESP32 SUB (Esclavo) - Motores 4 a 7
+| Canal Lógico | PWM Pin | IN1 | IN2 | Enc A | Enc B | Unidad PCNT | Notas / Strapping |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Motor 4 (M4)** | GPIO 2 | GPIO 4 | GPIO 15 | GPIO 34 | GPIO 35 | PCNT 0 | GPIO 2 y 15 son Strapping |
+| **Motor 5 (M5)** | GPIO 12 | GPIO 13 | GPIO 14 | GPIO 36 | GPIO 39 | PCNT 1 | GPIO 12 es Strapping (MTDI) |
+| **Motor 6 (M6)** | GPIO 25 | GPIO 26 | GPIO 27 | GPIO 32 | GPIO 33 | PCNT 2 | GPIO estándar |
+| **Motor 7 (M7)** | GPIO 18 | GPIO 19 | GPIO 23 | GPIO 21 | GPIO 22 | PCNT 3 | GPIO estándar |
+
+### Pines de Sistema por Placa:
+*   **STBY Local:** `GPIO 5` (Salida digital, una en cada placa. Al ponerse en `LOW` deshabilita de inmediato sus 4 canales de potencia TB6612 locales).
+*   **Interconexión UART2:** `GPIO 16` (RX) y `GPIO 17` (TX). *Las líneas deben ir cruzadas (TX de MAIN a RX de SUB y viceversa).*
+*   **Depuración/Carga UART0:** `GPIO 1` (TX) y `GPIO 3` (RX), enrutados a través del puerto Micro-USB/USB-C UART de la placa.
+
+### Notas Críticas de Diseño:
+> [!TIP]
+> **Seguridad de Strapping Pins (2, 5, 12, 15):** Estos pines determinan el modo de arranque del ESP32. Su uso es seguro en este diseño ya que todas las entradas del integrado TB6612FNG (PWM, IN1, IN2, STBY) poseen resistencias internas de pulldown débiles de ~200k. Esto mantiene las señales en nivel `LOW` durante el arranque, asegurando el modo de ejecución SPI estándar de la Flash sin componentes de pull-down adicionales.
+>
+> **Entradas Restringidas (Input-Only):** Los pines `34, 35, 36 y 39` no tienen transistores de salida y carecen de pull-ups/pull-downs internos. Su uso exclusivo como entradas para los canales de encoders A/B de los motores 0 y 1 (o 4 y 5) es ideal debido a que los encoders ópticos envían pulsos activos definidos externamente.
+
+---
+
+## 4. Protocolo de Comunicación UART
+
+La comunicación binaria de interconexión corre de manera ininterrumpida en Core 1 a 921600 bps. Emplea tramas compactas con verificación de integridad por hardware mediante el polinomio **CRC8 Dallas/Maxim (0x31)**.
+
+### Tipos de Tramas:
+1.  **Telemetría de Encoders (SUB -> MAIN, 38 bytes, 1 kHz):**
+    *   `SOF 1 & 2`: `0xAA 0xBB`
+    *   `LENGTH`: `0x20` (32 bytes)
+    *   `SEQ`: Contador circular de secuencia (0-255).
+    *   `BOOT_ID`: Identificador pseudoaleatorio generado al iniciar el esclavo para verificar fallos de alimentación remotos.
+    *   `PAYLOAD`: `int32_t[8]` con el conteo acumulado de encoders (los índices 4-7 contienen el conteo de M4-M7; los índices 0-3 se transmiten en 0).
+    *   `CRC8`: Byte de verificación.
+2.  **Consignas de Control (MAIN -> SUB, 37 bytes, 1 kHz):**
+    *   `SOF 1 & 2`: `0xCC 0xDD`
+    *   `LENGTH`: `0x20` (32 bytes)
+    *   `SEQ`: Contador circular.
+    *   `PAYLOAD`: `float[8]` con los ciclos de PWM con signo (`-255.0` a `255.0`) calculados por el PID.
+    *   `CRC8`: Byte de verificación.
+
+### Timeout de Seguridad Distribuido (ESTOP):
+*   Si el **ESP32 MAIN** no recibe telemetría válida por más de **50 ms**, ingresa localmente en `STATE_ESTOP`, apaga sus salidas PWM locales y tira su `STBY` a `LOW`.
+*   Si el **ESP32 SUB** no recibe consignas válidas por más de **50 ms**, desactiva localmente su pin `STBY` y apaga todas las salidas de dirección (`IN1`/`IN2`) y PWM a sus motores locales de forma autónoma.
+
+---
+
+## 5. Sistema de Control (PID)
+
+El lazo PID de posición se calcula de forma centralizada en el ESP32 MAIN a **1 kHz**:
+*   **Ganancias:** $K_p = 8.5$, $K_i = 0.1$, $K_d = 0.4$.
+*   **Anti-Windup:** Límite integral de $\pm 50.0$.
+*   **Freno Activo (Short-Brake):** Al detenerse o ante consignas nulas, las señales del driver se ponen en `IN1=LOW` e `IN2=LOW`, forzando el cortocircuito dinámico del motor para frenado instantáneo.
+*   **Torque de Retención Activo:** Para eliminar holguras indeseadas en los cables de tracción, el controlador inyecta una pre-tensión constante equivalente a un PWM mínimo de `25` en reposo cerca de la pose objetivo.
+
+---
+
+## 6. Cinemática Inversa
+
+El robot controla la pose del efector final en un espacio de 6 grados de libertad. El modelo cinemático transforma la coordenada del efector $(X, Y, Z, Roll, Pitch, Yaw)$ a la longitud correspondiente de los 8 cables de soporte:
+$$L_i = \| \mathbf{P}_i - (\mathbf{X}_{ef} + \mathbf{R}_{zyx} \mathbf{a}_i) \|$$
+Donde:
+*   $\mathbf{P}_i$ representa las coordenadas del anclaje superior de la polea $i$ (definidas en `POLE_POSITIONS`).
+*   $\mathbf{a}_i$ representa el punto de anclaje en el efector final de la plataforma (definidas en `ANCHOR_POSITIONS`).
+*   $\mathbf{R}_{zyx}$ es la matriz de rotación del efector final.
+
+El cálculo completo en punto flotante se ejecuta en el procesador Maestro y puede consultarse en [Kinematics.cpp](file:///c:/Users/julio/Desktop/robot%20de%20cables/Cable-Driven%20Parallel%20Robot/codigo/firmware-main/src/Kinematics.cpp).
+
+---
+
+## 7. Estructura del Repositorio
 
 ```text
-[ ESP32 MAIN ]                                  [ ESP32 ENCODER ]
-  GND -------------------------------------------- GND (Común Obligatorio)
-  RX2 (GPIO 16) <--------------------------------- TX2 (GPIO 17) [Telemetría Encoders]
-  TX2 (GPIO 17) ---------------------------------> RX2 (GPIO 16) [Consignas PWM en Simulación]
-```
-
-### Tabla de Asignación de Pines - ESP32 MAIN/MOTOR
-
-La dirección de cada motor se controla a través de dos señales (IN1 e IN2) utilizando el expansor I2C MCP23017 de 16 bits. La línea STBY de los 4 breakouts TB6612FNG está unificada físicamente en el GPIO 5 para permitir un apagado instantáneo (ESTOP) redundante por hardware.
-
-| Motor | PWM Pin (ESP32) | Bit MCP23017 (IN1) | Bit MCP23017 (IN2) | Canal Físico / Breakout | Puerto y Pin del MCP23017 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Motor 0** | GPIO 2 | Bit 0 | Bit 1 | Breakout 1 - Canal A | GPA0 (Pin 21) y GPA1 (Pin 22) |
-| **Motor 1** | GPIO 12 | Bit 2 | Bit 3 | Breakout 1 - Canal B | GPA2 (Pin 23) y GPA3 (Pin 24) |
-| **Motor 2** | GPIO 14 | Bit 4 | Bit 5 | Breakout 2 - Canal A | GPA4 (Pin 25) y GPA5 (Pin 26) |
-| **Motor 3** | GPIO 23 | Bit 6 | Bit 7 | Breakout 2 - Canal B | GPA6 (Pin 27) y GPA7 (Pin 28) |
-| **Motor 4** | GPIO 27 | Bit 8 | Bit 9 | Breakout 3 - Canal A | GPB0 (Pin 1) y GPB1 (Pin 2) |
-| **Motor 5** | GPIO 18 | Bit 10 | Bit 11 | Breakout 3 - Canal B | GPB2 (Pin 3) y GPB3 (Pin 4) |
-| **Motor 6** | GPIO 19 | Bit 12 | Bit 13 | Breakout 4 - Canal A | GPB4 (Pin 5) y GPB5 (Pin 6) |
-| **Motor 7** | GPIO 25 | Bit 14 | Bit 15 | Breakout 4 - Canal B | GPB6 (Pin 7) y GPB7 (Pin 8) |
-| **STBY (Unificado)** | GPIO 5 | - | - | Desactivación global | Controla STBY de los 4 breakouts |
-
-- **I2C**: SDA = GPIO 21, SCL = GPIO 22 (Siempre activo para el control del MCP23017).
-- **UART2**: RX2 = GPIO 16, TX2 = GPIO 17.
-
-### Diagrama de Conexión de Controladores TB6612FNG y MCP23017
-
-```text
-       [ ESP32 MAIN ]                       [ MCP23017 ]
-        GPIO 21 (SDA) <====================> Pin 13 (SDA)
-        GPIO 22 (SCL) <====================> Pin 12 (SCL)
-        GPIO 5  (STBY) ---------------------+
-                                            |
-       [ ALIMENTACIÓN ]                     |
-        VM (12V Motor)                      |
-        VCC (5V/3.3V Logic)                 |
-        GND --------------------+           |
-                                |           |
-       +------------------------V-----------V-----------------------+
-       |   Breakouts Físicos TB6612FNG (1 al 4)                     |
-       |                                                            |
-       |   +------------------+         +------------------+        |
-       |   |   Breakout #1    |         |   Breakout #2    |        |
-       |   | VM, VCC, GND     |         | VM, VCC, GND     |        |
-       |   | STBY <-----------|---------| STBY <-----------|--------| (Desde GPIO 5)
-       |   |                  |         |                  |        |
-       |   | PWMA <--- GPIO 2 |         | PWMA <--- GPIO 14|        |
-       |   | AIN1 <--- GPA0   |         | AIN1 <--- GPA4   |        |
-       |   | AIN2 <--- GPA1   |         | AIN2 <--- GPA5   |        |
-       |   | AO1/AO2 -> Mot 0 |         | AO1/AO2 -> Mot 2 |        |
-       |   |                  |         |                  |        |
-       |   | PWMB <--- GPIO 12|         | PWMB <--- GPIO 23|        |
-       |   | BIN1 <--- GPA2   |         | BIN1 <--- GPA6   |        |
-       |   | BIN2 <--- GPA3   |         | BIN2 <--- GPA7   |        |
-       |   | BO1/BO2 -> Mot 1 |         | BO1/BO2 -> Mot 3 |        |
-       |   +------------------+         +------------------+        |
-       |                                                            |
-       |   +------------------+         +------------------+        |
-       |   |   Breakout #3    |         |   Breakout #4    |        |
-       |   | VM, VCC, GND     |         | VM, VCC, GND     |        |
-       |   | STBY <-----------|---------| STBY <-----------|--------| (Desde GPIO 5)
-       |   |                  |         |                  |        |
-       |   | PWMA <--- GPIO 27|         | PWMA <--- GPIO 19|        |
-       |   | AIN1 <--- GPB0   |         | AIN1 <--- GPB4   |        |
-       |   | AIN2 <--- GPB1   |         | AIN2 <--- GPB5   |        |
-       |   | AO1/AO2 -> Mot 4 |         | AO1/AO2 -> Mot 6 |        |
-       |   |                  |         |                  |        |
-       |   | PWMB <--- GPIO 18|         | PWMB <--- GPIO 25|        |
-       |   | BIN1 <--- GPB2   |         | BIN1 <--- GPB6   |        |
-       |   | BIN2 <--- GPB3   |         | BIN2 <--- GPB7   |        |
-       |   | BO1/BO2 -> Mot 5 |         | BO1/BO2 -> Mot 7 |        |
-       |   +------------------+         +------------------+        |
-       +------------------------------------------------------------+
+codigo/
+├── docs/                         # Documentación del hardware y reportes de auditoría
+│   ├── README.md                 # Copia de este README
+│   └── pin_audit_report.md       # Reporte detallado de la auditoría de pines original
+├── firmware-main/                # Proyecto PlatformIO para el ESP32 Maestro (MAIN)
+│   ├── src/
+│   │   ├── Config.h              # Mapeo de pines de M0-M3 y configuraciones
+│   │   ├── Kinematics.cpp / .h   # Cinemática inversa 6-DOF
+│   │   ├── MotorController.cpp   # Control PID y GPIO de motores locales
+│   │   ├── Globals.cpp / .h      # Variables de estado global compartidas
+│   │   └── main.cpp              # Lazo a 1 kHz, PCNT local y parseador UART
+│   ├── platformio.ini            # Configuración de compilación para el Maestro
+│   └── data/                     # Archivos de interfaz web (HTML/CSS/JS) para LittleFS
+├── firmware-encoder/             # Proyecto PlatformIO para el ESP32 Esclavo (SUB)
+│   ├── src/
+│   │   ├── Config.h              # Mapeo de pines de M4-M7 locales
+│   │   └── main.cpp              # PCNT esclavo, UART y salidas GPIO físicas
+│   └── platformio.ini            # Configuración de compilación para el Esclavo
+└── python-sim/                   # Scripts de visualización y pruebas de la PC
+    ├── validation.py             # Script principal de validación serial JSON
+    └── motor_sim.py              # Script auxiliar de prueba y simulación
 ```
 
 ---
 
-### Tabla de Asignación de Pines - ESP32 ENCODER
+## 8. Cómo Compilar y Flashear
 
-| Motor | Canal Encoder A (PCNT Input) | Canal Encoder B (PCNT Input) | Unidad PCNT |
-| :--- | :--- | :--- | :--- |
-| **Motor 0** | GPIO 34 | GPIO 35 | PCNT 0 |
-| **Motor 1** | GPIO 36 | GPIO 39 | PCNT 1 |
-| **Motor 2** | GPIO 32 | GPIO 33 | PCNT 2 |
-| **Motor 3** | GPIO 25 | GPIO 26 | PCNT 3 |
-| **Motor 4** | GPIO 27 | GPIO 13 | PCNT 4 |
-| **Motor 5** | GPIO 23 | GPIO 19 | PCNT 5 |
-| **Motor 6** | GPIO 4 | GPIO 15 | PCNT 6 |
-| **Motor 7** | GPIO 18 | GPIO 14 | PCNT 7 |
+### Requisitos:
+*   VS Code con la extensión **PlatformIO IDE**.
+*   Framework Arduino para ESP32 (Core v3.x o superior).
 
-- **UART2**: RX2 = GPIO 16, TX2 = GPIO 17.
+### Instrucciones de Carga:
 
----
+1.  **Cargar el ESP32 MAIN (Maestro):**
+    *   Conecta la placa MAIN por USB.
+    *   Abre la carpeta `firmware-main/` en VS Code.
+    *   Compila y carga el firmware:
+        ```bash
+        pio run --target upload
+        ```
+    *   Sube la interfaz web al sistema de archivos LittleFS:
+        ```bash
+        pio run --target uploadfs
+        ```
+2.  **Cargar el ESP32 SUB (Esclavo):**
+    *   Conecta la placa SUB por USB.
+    *   Abre la carpeta `firmware-encoder/` en VS Code.
+    *   Compila y carga el firmware:
+        ```bash
+        pio run --target upload
+        ```
 
-## Protocolo UART Binario y Medidas de Seguridad
-
-La comunicación se realiza mediante tramas binarias compactas para evitar latencias. El cálculo de CRC8 se hace utilizando el polinomio **Dallas/Maxim CRC-8 (0x31)** ($x^8 + x^5 + x^4 + 1$).
-
-### 1. Frame de Telemetría (ENCODER -> MAIN, 38 bytes, 1 kHz)
-Calculado sobre los bytes 3 a 36:
-- `SOF 1 & 2`: `0xAA 0xBB`
-- `LENGTH`: `0x20` (32 bytes)
-- `SEQ`: Contador circular de secuencia (0-255)
-- `BOOT_ID`: Generado pseudoaleatoriamente (`esp_random() % 256`) al arrancar el esclavo.
-- `PAYLOAD`: `int32_t[8]` con ticks crudos de encoders.
-- `CRC8`: Byte final.
-
-### 2. Frame de Simulación PWM (MAIN -> ENCODER, 37 bytes, 1 kHz, solo en `SIMULATION_MODE=1`)
-Calculado sobre los bytes 3 a 35:
-- `SOF 1 & 2`: `0xCC 0xDD`
-- `LENGTH`: `0x20` (32 bytes)
-- `SEQ`: Contador circular de secuencia (0-255)
-- `PAYLOAD`: `float[8]` con salidas PWM calculadas por el PID.
-- `CRC8`: Byte final.
-
-### Medidas de Seguridad del Sistema
-1. **Protección de Enlace UART (Timeout de 50 ms)**: Si el MAIN no recibe tramas válidas del ENCODER por más de 50 ms, transiciona inmediatamente a `STATE_ESTOP` por seguridad.
-2. **Protección contra Reinicio del Esclavo (BOOT_ID)**: El MAIN almacena el `BOOT_ID` inicial durante el homing. Si el ENCODER se reinicia (el `BOOT_ID` cambia), el MAIN fuerza `STATE_ESTOP` para evitar saltos violentos en la estimación de posición.
-3. **Resincronización de Trama por Timeout (5 ms)**: Si se pierde la sincronización de bytes dentro de una trama, el parseador se restablece a los 5 ms de inactividad para no bloquear el control.
-4. **Timeout en Esclavo (50 ms)**: En modo simulación, si el esclavo deja de recibir tramas del maestro por 50 ms, apaga automáticamente todas las entradas PWM a `0.0f` para prevenir runaways inerciales.
+### Selección de Modo Físico vs Simulación:
+En el archivo `Config.h` de ambos proyectos, puedes alterar el comportamiento general alternando el flag `SIMULATION_MODE`:
+*   `#define SIMULATION_MODE 0` -> Modo físico real conectado a drivers y encoders.
+*   `#define SIMULATION_MODE 1` -> Modo simulación (el ESP32 SUB simula la respuesta inercial del motor DC internamente por software).
 
 ---
 
-## Compilación y Carga de Firmwares
+## 9. Cómo Correr el Simulador Python
 
-El repositorio contiene dos proyectos PlatformIO independientes:
+El script de validación en Python permite interactuar con el robot enviándole comandos de pose en formato JSON a través del puerto serie USB de la PC conectada al ESP32 Maestro:
 
-### Carga del Firmware MAIN (Maestro)
-1. Conecta el ESP32 MAIN a tu computadora.
-2. Entra al directorio `firmware-main/` o ábrelo en VS Code.
-3. Compila y carga el firmware:
-   ```bash
-   pio run --target upload
-   ```
-4. Sube la interfaz web a la memoria flash LittleFS:
-   ```bash
-   pio run --target uploadfs
-   ```
-
-### Carga del Firmware ENCODER (Esclavo)
-1. Conecta el ESP32 ENCODER a tu computadora.
-2. Entra al directorio `firmware-encoder/` o ábrelo en VS Code.
-3. Compila y carga el firmware:
-   ```bash
-   pio run --target upload
-   ```
+1.  Instala las dependencias en la terminal de tu PC:
+    ```bash
+    pip install pyserial
+    ```
+2.  Ejecuta el script indicando el puerto COM donde se encuentra el ESP32 MAIN:
+    ```bash
+    python python-sim/validation.py
+    ```
 
 ---
 
-## Simulación y Validación con Python
+## 10. Advertencias de Hardware Críticas
 
-El contrato del protocolo JSON serie del maestro para telemetría no ha sido alterado, garantizando plena compatibilidad con los scripts de python actuales en `python-sim/` (como `validation.py`, `visualizer.py` y `motor_sim.py`).
-
-1. Habilita `-DSIMULATION_MODE=1` en los archivos `platformio.ini` de ambos proyectos.
-2. Conéctalos físicamente cruzando los pines RX2 y TX2 con GND común.
-3. Abre el script de validación con Python indicando el puerto de depuración USB del ESP32 MAIN:
-   ```bash
-   python python-sim/validation.py
-   ```
+> [!CAUTION]
+> **Tierra Común Obligatoria:** El bus de interconexión UART opera a alta frecuencia (921600 bps). Es estrictamente obligatorio conectar físicamente las líneas `GND` de ambos ESP32. La falta de una referencia común provocará la corrupción de datos y activará constantemente el timeout de parada de emergencia (`STATE_ESTOP`).
+>
+> **Encendido Incremental Seguro:** Durante la primera puesta en marcha, se recomienda alimentar las placas ESP32 por USB y mantener la línea de potencia del motor (VM) apagada. Verifica en el monitor serial que las comunicaciones fluyan sin activar el ESTOP antes de alimentar las etapas de potencia (12V).
+>
+> **Errores de Conexión Cruzada:** Ambas placas usan internamente la misma numeración de pines GPIO para motores y encoders. Etiqueta físicamente los cables "GRUPO MAIN (M0-M3)" y "GRUPO SUB (M4-M7)" para evitar aplicar señales de control a la placa equivocada.

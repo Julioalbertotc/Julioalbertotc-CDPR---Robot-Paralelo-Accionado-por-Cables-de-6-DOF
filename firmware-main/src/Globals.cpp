@@ -30,6 +30,3 @@ bool request_estop = false;
 
 // Instancia de los 8 controladores de motor
 MotorController motors[8];
-
-// Registro global de salida del expansor I2C MCP23017 para ruteo rápido
-uint16_t mcp_direction_register = 0;

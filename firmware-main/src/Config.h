@@ -15,7 +15,7 @@
 #define INTERCONNECT_BAUD 921600
 
 // =============================================================================
-// INTERCONEXIÓN UART (Hacia el ESP32 ENCODER)
+// INTERCONEXIÓN UART (Hacia el ESP32 SUB)
 // =============================================================================
 #define UART_RX_PIN 16
 #define UART_TX_PIN 17
@@ -29,14 +29,9 @@
 #define AP_MAX_CONN 4
 
 // =============================================================================
-// DIRECCIÓN I2C Y PINES DE EXPANSOR / SEGURIDAD
+// PINES DE SEGURIDAD LOCALES (ESP32 MAIN)
 // =============================================================================
-#define I2C_SDA 21
-#define I2C_SCL 22
-#define MCP23017_ADDR 0x20
-
-// Pin de hardware real para standby de los 4 TB6612FNG
-#define STBY_PIN 5 // Se tira a LOW en ESTOP para apagar los puentes H en hardware
+#define STBY_PIN 5 // Se tira a LOW en ESTOP para apagar los puentes H locales en hardware
 
 // =============================================================================
 // GEOMETRÍA DEL ROBOT (Unidades en centímetros)
@@ -75,26 +70,26 @@ const Vector3D DEFAULT_START_POSE_ROT = {0.0f, 0.0f, 0.0f};
 // =============================================================================
 // ASIGNACIÓN DE PINES GPIO (ESP32 MAIN)
 // =============================================================================
-// Cada motor tiene:
-// - pwm: Pin de PWM directo del ESP32 (8 pines independientes).
-// - dir_in1_bit: Índice del bit en el MCP23017 para la señal IN1 (0 a 15).
-// - dir_in2_bit: Índice del bit en el MCP23017 para la señal IN2 (0 a 15).
 struct MotorPins {
-    uint8_t pwm;
-    uint8_t dir_in1_bit;
-    uint8_t dir_in2_bit;
+    bool is_local;       // True si el motor se controla/lee en esta placa
+    uint8_t pwm;         // Pin de PWM
+    uint8_t dir1;        // Pin IN1
+    uint8_t dir2;        // Pin IN2
+    uint8_t encA;        // Pin Encoder Canal A
+    uint8_t encB;        // Pin Encoder Canal B
+    int pcnt_unit;       // Unidad PCNT (solo local)
 };
 
 const MotorPins MOTOR_PINS[8] = {
-    // Motor, PWM Pin, Bit MCP IN1, Bit MCP IN2
-    { 2,   0,  1 }, // Motor 0
-    { 12,  2,  3 }, // Motor 1
-    { 14,  4,  5 }, // Motor 2
-    { 23,  6,  7 }, // Motor 3
-    { 27,  8,  9 }, // Motor 4
-    { 18, 10, 11 }, // Motor 5
-    { 19, 12, 13 }, // Motor 6
-    { 25, 14, 15 }  // Motor 7
+    // Local?, PWM, DIR1, DIR2, EncA, EncB, PCNT_Unit
+    { true,  2,  4, 15, 34, 35, 0 },  // Motor 0 (Local M0)
+    { true, 12, 13, 14, 36, 39, 1 },  // Motor 1 (Local M1)
+    { true, 25, 26, 27, 32, 33, 2 },  // Motor 2 (Local M2)
+    { true, 18, 19, 23, 21, 22, 3 },  // Motor 3 (Local M3)
+    { false, 0,  0,  0,  0,  0, -1 },  // Motor 4 (Remoto)
+    { false, 0,  0,  0,  0,  0, -1 },  // Motor 5 (Remoto)
+    { false, 0,  0,  0,  0,  0, -1 },  // Motor 6 (Remoto)
+    { false, 0,  0,  0,  0,  0, -1 }   // Motor 7 (Remoto)
 };
 
 // =============================================================================

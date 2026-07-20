@@ -20,23 +20,34 @@
 #define UART_TX_PIN 17
 
 // =============================================================================
-// ASIGNACIÓN DE PINES DE ENCODERS (PCNT)
+// PIN DE SEGURIDAD LOCAL (ESP32 SUB)
 // =============================================================================
-struct EncoderPins {
-    int encA;
-    int encB;
-    int pcnt_unit; // Unidad PCNT (0 a 7 en ESP32)
+#define STBY_PIN 5 // Habilitación física de drivers TB6612 locales en hardware
+
+// =============================================================================
+// ASIGNACIÓN DE PINES DE MOTORES Y ENCODERS LOCALES (MOTORES 4 A 7)
+// =============================================================================
+struct MotorPins {
+    bool is_local;       // True si el motor se controla/lee en esta placa
+    uint8_t pwm;         // Pin de PWM
+    uint8_t dir1;        // Pin IN1
+    uint8_t dir2;        // Pin IN2
+    uint8_t encA;        // Pin Encoder Canal A
+    uint8_t encB;        // Pin Encoder Canal B
+    int pcnt_unit;       // Unidad PCNT
 };
 
-const EncoderPins ENCODER_PINS[8] = {
-    { 34, 35, 0 }, // Motor 0
-    { 36, 39, 1 }, // Motor 1
-    { 32, 33, 2 }, // Motor 2
-    { 25, 26, 3 }, // Motor 3
-    { 27, 13, 4 }, // Motor 4
-    { 23, 19, 5 }, // Motor 5
-    {  4, 15, 6 }, // Motor 6
-    { 18, 14, 7 }  // Motor 7 (Usamos pines libres de strapping y flash)
+const MotorPins MOTOR_PINS[8] = {
+    // Para Motores 0-3 locales en MAIN, colocamos is_local=false en SUB.
+    { false, 0,  0,  0,  0,  0, -1 },  // Motor 0
+    { false, 0,  0,  0,  0,  0, -1 },  // Motor 1
+    { false, 0,  0,  0,  0,  0, -1 },  // Motor 2
+    { false, 0,  0,  0,  0,  0, -1 },  // Motor 3
+    // Motores 4-7 locales en SUB.
+    { true,  2,  4, 15, 34, 35,  0 },  // Motor 4 (Local M4)
+    { true, 12, 13, 14, 36, 39,  1 },  // Motor 5 (Local M5)
+    { true, 25, 26, 27, 32, 33,  2 },  // Motor 6 (Local M6)
+    { true, 18, 19, 23, 21, 22,  3 }   // Motor 7 (Local M7)
 };
 
 // =============================================================================

@@ -11,8 +11,14 @@ void MotorController::begin(int motor_id) {
     pins = MOTOR_PINS[motor_id];
     
 #if !SIMULATION_MODE
-    // Configurar PWM por hardware usando LEDC
-    ledcAttach(pins.pwm, 20000, 8); // Pin, 20 kHz, 8 bits
+    if (pins.is_local) {
+        // Configurar PWM por hardware usando LEDC
+        ledcAttach(pins.pwm, 20000, 8); // Pin, 20 kHz, 8 bits
+        pinMode(pins.dir1, OUTPUT);
+        pinMode(pins.dir2, OUTPUT);
+        digitalWrite(pins.dir1, LOW);
+        digitalWrite(pins.dir2, LOW);
+    }
 #endif
 
     raw_ticks = 0;
@@ -77,22 +83,28 @@ void MotorController::update(float dt) {
     pwm_output = constrain(pid_signal, PID_MIN_PWM, PID_MAX_PWM);
 
 #if !SIMULATION_MODE
-    int pwm_val = (int)abs(pwm_output);
-    ledcWrite(pins.pwm, pwm_val);
-    
-    // Actualizar registro de dirección de 16 bits para el MCP23017
-    if (pwm_output > 0.0f) {
-        // Giro adelante: IN1 = HIGH, IN2 = LOW
-        mcp_direction_register |= (1 << pins.dir_in1_bit);
-        mcp_direction_register &= ~(1 << pins.dir_in2_bit);
-    } else if (pwm_output < 0.0f) {
-        // Giro atrás: IN1 = LOW, IN2 = HIGH
-        mcp_direction_register &= ~(1 << pins.dir_in1_bit);
-        mcp_direction_register |= (1 << pins.dir_in2_bit);
-    } else {
-        // Freno activo (Short brake): IN1 = LOW, IN2 = LOW
-        mcp_direction_register &= ~(1 << pins.dir_in1_bit);
-        mcp_direction_register &= ~(1 << pins.dir_in2_bit);
+    if (pins.is_local) {
+        int pwm_val = (int)abs(pwm_output);
+        if (current_state == STATE_ESTOP) {
+            ledcWrite(pins.pwm, 0);
+            digitalWrite(pins.dir1, LOW);
+            digitalWrite(pins.dir2, LOW);
+        } else {
+            ledcWrite(pins.pwm, pwm_val);
+            if (pwm_output > 0.0f) {
+                // Giro adelante: IN1 = HIGH, IN2 = LOW
+                digitalWrite(pins.dir1, HIGH);
+                digitalWrite(pins.dir2, LOW);
+            } else if (pwm_output < 0.0f) {
+                // Giro atrás: IN1 = LOW, IN2 = HIGH
+                digitalWrite(pins.dir1, LOW);
+                digitalWrite(pins.dir2, HIGH);
+            } else {
+                // Freno activo (Short brake): IN1 = LOW, IN2 = LOW
+                digitalWrite(pins.dir1, LOW);
+                digitalWrite(pins.dir2, LOW);
+            }
+        }
     }
 #endif
 }
